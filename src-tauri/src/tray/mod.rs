@@ -229,25 +229,45 @@ fn sync_autostart_item(app: &AppHandle) {
     }
 }
 
-/// 自启菜单项文案：开启后明确显示绑定的工作区名称。
-fn autostart_label(app: &AppHandle) -> String {
+/// 自启菜单项文案。
+///
+/// 只有一个工作区时名称是冗余的，省略；多工作区时才标出绑定的工作区名，
+/// 避免用户搞不清登录时会启动哪一个。
+///
+/// 绑定已失效时必须明确告知，而不是回退显示成另一个工作区。
+fn autostart_label_text(
+    workspace_count: usize,
+    target: &crate::data::AutostartTarget,
+    bound_name: Option<&str>,
+) -> String {
     const BASE: &str = "开机自启并启动 MCP/隧道";
-    let state = app.state::<AppState>();
-    let target = state
-        .with_workspaces(|store| Ok(store.autostart_launch_target()))
-        .unwrap_or(crate::data::AutostartTarget::Unbound);
     match target {
-        crate::data::AutostartTarget::Bound(id) => {
-            let name = state
-                .with_workspaces(|store| Ok(store.get(&id).map(|p| p.name.clone())))
-                .ok()
-                .flatten()
-                .unwrap_or(id);
+        crate::data::AutostartTarget::Bound(_) if workspace_count > 1 => {
+            let name = bound_name.unwrap_or("未知工作区");
             format!("{BASE}（{name}）")
         }
-        // 绑定已失效时必须明确告知，而不是回退显示成另一个工作区。
         crate::data::AutostartTarget::Missing(_) => format!("{BASE}（目标已失效）"),
-        crate::data::AutostartTarget::Unbound => BASE.to_string(),
+        _ => BASE.to_string(),
+    }
+}
+
+/// 读取当前状态并生成自启菜单项文案。
+fn autostart_label(app: &AppHandle) -> String {
+    let state = app.state::<AppState>();
+    let info = state.with_workspaces(|store| {
+        let count = store.list().len();
+        let target = store.autostart_launch_target();
+        let name = match &target {
+            crate::data::AutostartTarget::Bound(id) => store.get(id).map(|p| p.name.clone()),
+            _ => None,
+        };
+        Ok((count, target, name))
+    });
+
+    match info {
+        Ok((count, target, name)) => autostart_label_text(count, &target, name.as_deref()),
+        // 读不到状态时不要假装已绑定：退回到中性文案。
+        Err(_) => "开机自启并启动 MCP/隧道".to_string(),
     }
 }
 
@@ -430,4 +450,48 @@ async fn tunnel_online(state: &AppState, id: &str) -> Option<bool> {
 #[allow(dead_code)]
 pub fn icon_image(app: &AppHandle, level: Level) -> Image<'static> {
     icon::image_for(app, level)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::AutostartTarget;
+
+    const BASE: &str = "开机自启并启动 MCP/隧道";
+
+    #[test]
+    fn single_workspace_hides_redundant_name() {
+        // 只有一个工作区时名称是冗余的：不应出现括号。
+        let text = autostart_label_text(1, &AutostartTarget::Bound("id-1".into()), Some("Nextcloud"));
+        assert_eq!(text, BASE);
+        assert!(!text.contains('（'), "单工作区不应附带工作区名：{text}");
+    }
+
+    #[test]
+    fn multiple_workspaces_show_bound_name() {
+        // 多工作区时必须标出绑定的是哪一个，避免歧义。
+        let text = autostart_label_text(3, &AutostartTarget::Bound("id-2".into()), Some("Nextcloud"));
+        assert_eq!(text, format!("{BASE}（Nextcloud）"));
+    }
+
+    #[test]
+    fn missing_target_is_reported_even_with_single_workspace() {
+        // 绑定失效是异常状态，必须告知，不能因为只有一个工作区就吞掉。
+        let text = autostart_label_text(1, &AutostartTarget::Missing("gone".into()), None);
+        assert_eq!(text, format!("{BASE}（目标已失效）"));
+    }
+
+    #[test]
+    fn unbound_never_shows_parentheses() {
+        for count in [1, 5] {
+            assert_eq!(autostart_label_text(count, &AutostartTarget::Unbound, None), BASE);
+        }
+    }
+
+    #[test]
+    fn multi_workspace_without_name_falls_back_safely() {
+        // 多工作区但读不到名字时不能崩，也不应回退成别的名字。
+        let text = autostart_label_text(2, &AutostartTarget::Bound("id-9".into()), None);
+        assert_eq!(text, format!("{BASE}（未知工作区）"));
+    }
 }

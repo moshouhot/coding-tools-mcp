@@ -67,6 +67,8 @@
 - [x] 采样 MCP 实际阶段 + 隧道实际会话状态
 - [x] 自启开关：绑定校验、失败回滚、勾选以读回为准
 - [x] 自启启动路径：隐藏窗口 + 启动绑定工作区 MCP + 失败弹系统对话框
+- [x] 菜单文案自适应：仅多工作区时附工作区名；绑定失效始终告知
+- [x] 单测：单/多工作区、未绑定、目标失效、缺名回退
 
 ### T5 接线与持久化
 
@@ -78,9 +80,9 @@
 
 ### T6 验证
 
-- [x] `cargo test --lib tray::`（32 项全通过）
+- [x] `cargo test --lib tray::`（37 项全通过）
 - [x] `cargo test --lib data::store::`（8 项，含目标删除不回退、落盘失败回滚）
-- [x] `cargo test --lib`（本机 211 passed / 0 failed）
+- [x] `cargo test --lib`（本机 216 passed / 0 failed）
 - [x] `cargo clippy --lib`（`src/tray/` 零警告；其余警告均为既有）
 - [x] `npm run check`（仅 1 项既有失败，见下）
 - [x] `npm run tauri -- build --bundles nsis`（产出安装包）
@@ -93,9 +95,9 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| `cargo test --lib tray::` | 32 passed / 0 failed |
+| `cargo test --lib tray::` | 37 passed / 0 failed |
 | `cargo test --lib data::store::` | 8 passed / 0 failed（含「目标删除不回退」回归） |
-| `cargo test --lib`（全量） | 211 passed / 0 failed |
+| `cargo test --lib`（全量） | 216 passed / 0 failed |
 | `cargo clippy --lib` | `src/tray/` 0 警告；其余警告均为既有 |
 | `npm run check` | 1 error：`vite.config.js` 的 `@ts-expect-error`（**既有失败**） |
 | `npm run tauri -- build --bundles nsis` | 成功（退出码 0），产出 `Coding Tools MCP_0.2.3_x64-setup.exe` |
@@ -122,6 +124,9 @@
 | MCP 错误 | 不计入运行数，summary 为「MCP 启动失败」，不误报为隧道问题；图标仍为灰度 |
 | 隧道已配置但离线 | summary 为「隧道未连接」，仍计入运行数，图标为原图标 |
 | 启动中（尚未监听） | 图标为灰度（未运行），文字显示「启动中」 |
+| 单工作区自启文案 | 不附带工作区名（无冗余括号） |
+| 多工作区自启文案 | 附带绑定工作区名，避免歧义 |
+| 绑定失效（单工作区亦然） | 显示「目标已失效」，不被吞掉 |
 | 含空格/中文/超长路径 | 自启命令引号包裹且引号成对 |
 
 ### 既有失败（与本次改动无关，已在干净 HEAD 上复现）
@@ -132,8 +137,8 @@
    `upstream.rs`、`process.rs`、`file.rs`、`cloudflare.rs`、`workspace/model.rs`），
    **均不在本次改动文件中**；CI 不跑 clippy。
 
-> 本次交付的全量测试结果为 **211 passed / 0 failed**。
-> 与本次改动直接相关的 `tray::`（32 项）与 `data::store::`（8 项）全部通过。
+> 本次交付的全量测试结果为 **216 passed / 0 failed**。
+> 与本次改动直接相关的 `tray::`（37 项）与 `data::store::`（8 项）全部通过。
 >
 > 早期记录曾提到 `tools::exec::tests::windows_workspace_scripts_and_python_unicode_execute_successfully`
 > 在本机稳定失败；本次复测已连续 4 次通过，疑与 Python 冷启动时序相关，
