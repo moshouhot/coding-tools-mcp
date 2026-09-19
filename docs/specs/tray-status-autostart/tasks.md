@@ -72,7 +72,8 @@
 - [x] 运行状态记录：变化时落盘、内容未变不写、启动期间暂停
 - [x] 退出时补一次只读快照（消除轮询 5 秒延迟导致的陈旧值）
 - [x] 真实转换（启动/停止/重启/删工作区）后立即记录；内部重启临时停止不写入
-- [x] 过期样本丢弃（代次比较）+ 记录串行化，防旧快照覆盖新状态
+- [x] 单一同步记录器：观测+落盘同临界区、无 `await`；轮询/转换/退出共用
+- [x] 未定态沿用上次归属；暂停用作用域令牌（取消安全）
 - [x] 读取/落盘失败可见且保留原记录（不把未知状态当空集）
 - [x] 失效恢复目标显式报告（不静默丢弃）
 - [x] 记录写入经 `DATA_FILE_LOCK`（与仓库其它写入路径一致）
@@ -92,9 +93,9 @@
 
 ### T6 验证
 
-- [x] `cargo test --lib tray::`（43 项全通过）
+- [x] `cargo test --lib tray::`（45 项全通过）
 - [x] `cargo test --lib data::store::`（8 项，含目标删除不回退、落盘失败回滚）
-- [x] `cargo test --lib`（本机 230 passed / 0 failed）
+- [x] `cargo test --lib`（本机 232 passed / 0 failed）
 - [x] `cargo clippy --lib`（`src/tray/` 零警告；其余警告均为既有）
 - [x] `npm run check`（仅 1 项既有失败，见下）
 - [x] `npm run tauri -- build --bundles nsis`（产出安装包）
@@ -107,9 +108,9 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| `cargo test --lib tray::` | 43 passed / 0 failed |
+| `cargo test --lib tray::` | 45 passed / 0 failed |
 | `cargo test --lib data::store::` | 8 passed / 0 failed（含「目标删除不回退」回归） |
-| `cargo test --lib`（全量） | 230 passed / 0 failed |
+| `cargo test --lib`（全量） | 232 passed / 0 failed |
 | `cargo clippy --lib` | `src/tray/` 0 警告；其余警告均为既有 |
 | `npm run check` | 1 error：`vite.config.js` 的 `@ts-expect-error`（**既有失败**） |
 | `npm run tauri -- build --bundles nsis` | 成功（退出码 0），产出 `Coding Tools MCP_0.2.3_x64-setup.exe` |
@@ -150,8 +151,12 @@
 | 启动路径互斥 | `--autostart` → `Autostart`，普通启动 → `Restore`，两者不相等 |
 | 记录范围 | 仅 `Healthy`（MCP 确实在监听）计入；启动中 / MCP 错误 / 已停止均不计 |
 | 暂停记录嵌套 | 深度计数：内层（内部重启）结束不得解除外层（启动恢复）的暂停；多余解除不减到负数 |
-| 延迟样本跨越启动转换 | `should_skip_record` 在代次不一致时丢弃，防止旧快照覆盖刚恢复的集合 |
-| 启动暂停期间 | 即使代次相同也不记录 |
+| 暂停嵌套（启动恢复 + 内部重启） | 深度计数：内层令牌 Drop 后外层暂停仍生效 |
+| 重启被取消 | 令牌 Drop 仍执行，暂停不泄漏（否则记录永久失效） |
+| 单工作区转换不影响另一工作区 | B 处于 `starting` 时沿用上次归属，不被 A 的转换连带清掉 |
+| 立即停止 | 监督器报 `stopped` 即剔除，即使端口尚未释放 |
+| 假活（running 但端口未监听） | 不记入，避免下次误恢复 |
+| 读不到工作区 | 采样返回 `None`，保持上一帧，不显示成「没有工作区」 |
 | `Ok` 但 state 非 running | 归类为失败（含 error/stopped），不得当成启动成功 |
 | `Err` 返回值 | 同样归类为失败并带上原因 |
 | 失效恢复目标 | `missing_running_ids_of` 单独取出，恢复时显式报告，不静默丢弃 |
@@ -164,8 +169,8 @@
    `upstream.rs`、`process.rs`、`file.rs`、`cloudflare.rs`、`workspace/model.rs`），
    **均不在本次改动文件中**；CI 不跑 clippy。
 
-> 本次交付的全量测试结果为 **230 passed / 0 failed**。
-> 与本次改动直接相关的 `tray::`（43 项）与 `data::store::`（16 项）全部通过。
+> 本次交付的全量测试结果为 **232 passed / 0 failed**。
+> 与本次改动直接相关的 `tray::`（45 项）与 `data::store::`（16 项）全部通过。
 >
 > 早期记录曾提到 `tools::exec::tests::windows_workspace_scripts_and_python_unicode_execute_successfully`
 > 在本机稳定失败；本次复测已连续 4 次通过，疑与 Python 冷启动时序相关，

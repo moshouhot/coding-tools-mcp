@@ -138,7 +138,12 @@ pub fn run() {
             // 首轮采样早于服务真正拉起，否则会把「当前为空」写回磁盘，
             // 待恢复集合在恢复动作开始前就被抹掉。
             let is_autostart = tray::autostart::is_autostart_invocation();
-            tray::suppress_recording(true);
+            // 启动动作（登录自启 / 普通启动恢复）期间暂停记录，且必须在轮询首帧之前生效：
+            // 首轮采样早于服务真正拉起，否则会把「当前为空」写回磁盘，
+            // 待恢复集合在恢复动作开始前就被抹掉。
+            //
+            // 令牌交给后台任务持有：即使该任务被取消，Drop 仍会解除暂停。
+            let suppress = tray::SuppressGuard::new();
             // 托盘状态图标：立即采样一次，随后每 5 秒刷新。
             tray::spawn_refresh_loop(app.handle().clone());
             // 由登录自启拉起时：不弹窗口，只驻留托盘，并后台启动绑定工作区的 MCP。
@@ -150,6 +155,8 @@ pub fn run() {
             }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                // 令牌随本任务存活，直到启动动作结束后释放。
+                let _suppress = suppress;
                 match tray::startup_path(is_autostart) {
                     tray::StartupPath::Autostart => {
                         tray::run_autostart_startup(handle.clone()).await
@@ -158,7 +165,9 @@ pub fn run() {
                         tray::run_restore_startup(handle.clone()).await
                     }
                 }
-                tray::resume_recording_and_refresh(&handle).await;
+                // 释放暂停后立即重采样一次，让磁盘落到启动完成后的真实状态。
+                drop(_suppress);
+                tray::refresh(&handle).await;
             });
             #[cfg(target_os = "windows")]
             {
@@ -235,7 +244,7 @@ pub fn run() {
                 }
             }
             tauri::RunEvent::Exit => {
-                // 补一次同步快照，消除「刚停止就退出」时轮询 5 秒延迟带来的陈旧值。
+                // 补一次快照，消除「刚停止就退出」时轮询 5 秒延迟带来的陈旧值。
                 // 此事件在 cleanup_before_exit 之前触发，监督器状态仍然完整。
                 tray::record_running_now(app_handle);
             }

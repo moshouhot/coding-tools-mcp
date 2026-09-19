@@ -7,10 +7,8 @@ pub mod autostart;
 pub mod icon;
 pub mod state;
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex, OnceLock};
-
-use tokio::sync::Mutex as AsyncMutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
@@ -43,27 +41,50 @@ static AUTOSTART_ITEM: OnceLock<CheckMenuItem<Wry>> = OnceLock::new();
 /// 最近一次聚合结果，用于避免无变化时重复设置图标。
 static LAST_STATE: Mutex<Option<TrayState>> = Mutex::new(None);
 
-/// 启动恢复期间暂停「运行中集合」的记录（**深度计数**）。
+/// 启动恢复 / 内部重启期间暂停「运行中集合」的记录（**深度计数**）。
 ///
 /// 首轮采样发生在恢复开始之前，此时什么都还没启动；若不暂停，会把「当前为空」
 /// 写回磁盘，待恢复集合在恢复动作真正开始前就被抹掉。
 ///
 /// 用计数而非布尔：启动恢复与内部重启可能嵌套（用户在恢复窗口内点了重启），
 /// 内层结束时不得把外层的暂停一并解除。
+///
+/// 请用 [`SuppressGuard`] 而非手工配对加减：手动配对在异步任务被取消时会漏掉
+/// 对应的减操作，导致暂停永久生效（此后再也不记录）。
 static SUPPRESS_DEPTH: AtomicU32 = AtomicU32::new(0);
 
-/// 记录代次。启动动作改变暂停状态时递增。
+/// 串行化「观测 → 落盘」。
 ///
-/// 采样会先读 MCP 相位、再 `await` 隧道锁；若这个间隙里发生了一次启动转换，
-/// 那个样本已经过期，用它落盘会覆盖刚恢复好的集合。采样前先记下代次，
-/// 落盘前对比，不一致则丢弃本次记录（下一轮轮询会重新采）。
-static RECORD_GENERATION: AtomicU64 = AtomicU64::new(0);
-
-/// 串行化「观测 → 落盘」，避免并发 refresh 以旧快照覆盖新快照。
-static RECORD_GATE: LazyLock<AsyncMutex<()>> = LazyLock::new(|| AsyncMutex::new(()));
+/// 普通 `Mutex`（非异步锁）是刻意选择：记录器内部**不含 `await`**，
+/// 所以不存在持锁跨 await 的问题，也就不需要异步锁。
+static RECORD_GATE: Mutex<()> = Mutex::new(());
 
 /// 记录失败是否已报告过（按失败片段去重，避免每 5 秒弹一次）。
 static RECORD_FAILURE_REPORTED: AtomicBool = AtomicBool::new(false);
+
+/// 暂停记录的作用域令牌：构造时 +1，`Drop` 时 -1。
+///
+/// 即使持有它的异步任务被取消，`Drop` 仍会执行，因此不会漏减。
+pub struct SuppressGuard {
+    _private: (),
+}
+
+impl SuppressGuard {
+    /// 开始暂停记录，直到本令牌被丢弃。
+    pub fn new() -> Self {
+        SUPPRESS_DEPTH.fetch_add(1, Ordering::SeqCst);
+        Self { _private: () }
+    }
+}
+
+impl Drop for SuppressGuard {
+    fn drop(&mut self) {
+        // 饱和减：不平衡的调用不得把计数减到负数（那会让暂停永久失效）。
+        let _ = SUPPRESS_DEPTH.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |d| {
+            Some(d.saturating_sub(1))
+        });
+    }
+}
 
 /// 全局 AppHandle，供运行时转换（启动/停止/重启）同步记录状态使用。
 ///
@@ -154,20 +175,23 @@ pub fn spawn_refresh_loop(app: AppHandle) {
 }
 
 /// 采样一次并应用。
+///
+/// 采样失败（读不到工作区）时保持上一帧，不把读失败显示成「没有工作区」。
 pub async fn refresh(app: &AppHandle) {
-    let sampled = sample(app).await;
-    apply(app, &sampled);
+    if let Some(sampled) = sample(app).await {
+        apply(app, &sampled);
+    }
 }
 
 /// 采样所有工作区的实际 MCP 与隧道状态。
-async fn sample(app: &AppHandle) -> TrayState {
+///
+/// 读不到工作区时返回 `None`：宁可保持上一帧（图标略旧），
+/// 也不能把「读失败」渲染成「没有工作区」。
+async fn sample(app: &AppHandle) -> Option<TrayState> {
     let state = app.state::<AppState>();
-    // 先记下代次：相位是在 await 隧道锁之前采的，若这个间隙里发生了
-    // 启动转换，这个样本已过期，不得用来落盘。
-    let generation = RECORD_GENERATION.load(Ordering::SeqCst);
     let profiles: Vec<WorkspaceProfile> = state
         .with_workspaces(|store| Ok(store.list().to_vec()))
-        .unwrap_or_default();
+        .ok()?;
 
     // 运行时阶段：refresh_mcp 会校验监听端口是否真的在跑。
     let phases: Vec<ServiceSample> = profiles.iter().map(|p| phase_of(&state, p)).collect();
@@ -206,110 +230,156 @@ async fn sample(app: &AppHandle) -> TrayState {
         })
         .collect();
 
-    // 记录「确实在监听」的集合。注意：只把 MCP 相位作为记录依据，
-    // 不使用受隧道采样延迟影响的字段。
-    let running: Vec<String> = samples
-        .iter()
-        .filter(|sample| state::mcp_listening(sample))
-        .map(|sample| sample.id.clone())
-        .collect();
-    record_running_mcp(app, &running, generation).await;
+    // 记录与聚合解耦：记录器自己重新观测一次（只读相位 + 端口），
+    // 不用这里的样本——样本的相位是在 `await` 隧道锁**之前**采集的，
+    // 可能已经过期。记录器内部同步完成观测与落盘，不跨 await。
+    record_now_reporting(app);
 
-    state::aggregate(samples)
+    Some(state::aggregate(samples))
 }
 
-/// 立即根据当前监督器状态记录运行中的 MCP。
+/// 统一的运行状态记录器：观测 + 落盘，全程同步且无 `await`。
 ///
-/// **严格只读**：不调 `refresh_mcp`（它会改监督器状态并在失效时 spawn 清理任务），
-/// 只读相位 + 实际端口监听，因此可在退出回调里安全调用（退出阶段 spawn 可能 panic）。
+/// 轮询、真实转换（启动/停止/重启/删工作区）、退出快照都调这一个入口，
+/// 因此不存在「旧观测后落盘覆盖新观测」的乱序问题——观测与落盘在同一个
+/// 临界区内完成，锁外无法插入更旧的观测。
 ///
-/// 用途：轮询最多有 5 秒延迟，若用户刚停止 MCP 就退出，磁盘上会留着陈旧的
-/// 「运行中」值；退出时补一次快照可消除这个窗口。进程退出不会主动停服务，
-/// 所以此刻端口仍在监听，采样结果是真实的最终状态。
-/// 记录当前实际在运行的 MCP。
-///
-/// **严格只读**：不调 `refresh_mcp`（它会改监督器状态并在失效时 spawn 清理任务），
-/// 只读相位 + 实际端口监听，因此可在退出回调里安全调用。
-///
-/// `bump_generation=true` 时递增代次，让在途的轮询样本失效（真实转换发生时用），
-/// 避免旧快照覆盖本次转换的结果。
+/// **保守处理未定态**：`starting`/`stopping` 尚未得出结果，此时保留该工作区
+/// 上一次的归属，不因其它工作区的转换而把它抹掉。
 ///
 /// 任何读取失败都**保留原有记录**而不是当作空集合——未知状态不得抹掉历史。
-fn record_current_state_inner(app: &AppHandle, bump_generation: bool) {
+fn record_now(app: &AppHandle) -> crate::error::AppResult<()> {
+    let state = app.state::<AppState>();
+    let profiles = state.with_workspaces(|store| Ok(store.list().to_vec()))?;
+    let previous = state.with_workspaces(|store| Ok(store.running_mcp_workspace_ids()))?;
+
+    let mut observations: Vec<McpObservation> = Vec::with_capacity(profiles.len());
+    for profile in &profiles {
+        let phase = state.with_runtime(|runtime| Ok(runtime.mcp_status(profile).state))?;
+        // 只有已确认在监听时才去查端口（省掉无意义的系统调用）。
+        let listening = if phase == "running" {
+            crate::platform::platform()
+                .find_pid_listening_on_port(profile.runtime.local_port)?
+                .is_some()
+        } else {
+            false
+        };
+        observations.push(McpObservation {
+            id: profile.id.clone(),
+            phase,
+            port_listening: listening,
+        });
+    }
+
+    let running = running_ids_from(&observations, &previous);
+    state.with_workspaces(|store| store.set_running_mcp_workspace_ids(&running).map(|_| ()))
+}
+
+/// 记录当前运行状态；失败时报告一次（不每 5 秒重复弹窗）。
+///
+/// 供轮询、真实转换与退出快照共用。调用者决定是否需要报告：
+/// 退出阶段不弹对话框（会阻断退出），改用 [`record_now`] 自行处理错误。
+fn record_now_reporting(app: &AppHandle) {
     if recording_suppressed() {
         return;
     }
-    if bump_generation {
-        RECORD_GENERATION.fetch_add(1, Ordering::SeqCst);
-    }
-    let state = app.state::<AppState>();
-    let Ok(profiles) = state.with_workspaces(|store| Ok(store.list().to_vec())) else {
-        eprintln!("[tray] 读取工作区失败，保留原有运行状态记录");
-        return;
+    let _guard = match RECORD_GATE.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            eprintln!("[tray] 记录锁已中毒，跳过本次记录");
+            return;
+        }
     };
-
-    let mut running: Vec<String> = Vec::new();
-    for profile in &profiles {
-        // 相位必须为 running，且端口确实在监听：与轮询口径一致，但不改状态。
-        let phase = match state.with_runtime(|runtime| Ok(runtime.mcp_status(profile).state)) {
-            Ok(phase) => phase,
-            Err(error) => {
-                eprintln!("[tray] 读取运行时状态失败，保留原有记录：{error}");
-                return;
-            }
-        };
-        if phase != "running" {
-            continue;
-        }
-        match crate::platform::platform().find_pid_listening_on_port(profile.runtime.local_port) {
-            Ok(Some(_)) => running.push(profile.id.clone()),
-            Ok(None) => {}
-            Err(error) => {
-                eprintln!("[tray] 检查端口失败，保留原有记录：{error}");
-                return;
-            }
-        }
+    // 取到锁后再看一次：等待期间可能已进入暂停。
+    if recording_suppressed() {
+        return;
     }
 
-    if let Err(error) = state.with_workspaces(|store| {
-        store.set_running_mcp_workspace_ids(&running).map(|_| ())
-    }) {
-        // 退出阶段不弹对话框（会阻断退出），但必须留下痕迹。
-        eprintln!("[tray] 记录运行状态失败：{error}");
+    match record_now(app) {
+        Ok(()) => RECORD_FAILURE_REPORTED.store(false, Ordering::SeqCst),
+        Err(error) => {
+            // 每个失败片段只报告一次，避免每 5 秒弹一个对话框。
+            if !RECORD_FAILURE_REPORTED.swap(true, Ordering::SeqCst) {
+                report_failure(
+                    app,
+                    &format!("记录运行状态失败（下次启动可能无法恢复服务）：{error}"),
+                );
+            } else {
+                eprintln!("[tray] 记录运行状态仍失败：{error}");
+            }
+        }
     }
 }
 
-/// 退出时补一次快照（不改代次，避免影响在途轮询）。
+/// 退出时补一次快照。
 ///
-/// 退出阶段应用即将结束，无并发写入，因此不取串行锁。
+/// 与轮询共用同一把锁，避免与在途记录乱序；退出阶段不弹对话框（会阻断退出），
+/// 失败只写日志。
 pub fn record_running_now(app: &AppHandle) {
-    record_current_state_inner(app, false);
-}
-
-/// 真实转换（启动/停止/重启）完成后立即记录。
-///
-/// 供 `commands/runtime.rs` 调用：轮询最多有 5 秒延迟，若在这窗口内退出，
-/// 磁盘上会留着陈旧值；转换后立刻记录可消除这个窗口。
-///
-/// 与轮询共用串行锁，避免两者以旧快照互相覆盖；递增代次使转换前
-/// 开始的轮询样本失效。
-pub async fn record_current_state_async() {
-    let Some(app) = APP_HANDLE.get() else {
+    if recording_suppressed() {
+        return;
+    }
+    let Ok(_guard) = RECORD_GATE.lock() else {
+        eprintln!("[tray] 记录锁已中毒，退出时跳过记录");
         return;
     };
-    let _guard = RECORD_GATE.lock().await;
-    record_current_state_inner(app, true);
+    if recording_suppressed() {
+        return;
+    }
+    if let Err(error) = record_now(app) {
+        eprintln!("[tray] 退出时记录运行状态失败：{error}");
+    }
 }
 
-/// 纯函数：本次记录是否应跳过。
+/// 真实转换（启动/停止/重启/删工作区）完成后立即记录。
 ///
-/// 两种情况：
+/// 轮询最多有 5 秒延迟，若在这窗口内退出，磁盘上会留着陈旧值；
+/// 转换后立刻记录可消除这个窗口。
 ///
-/// - 启动动作期间被暂停（`suppressed`）；
-/// - 采样代次与当前代次不一致——说明这个样本是在某次启动转换**之前**开始采集的，
-///   已经过期，用它落盘会覆盖刚恢复好的集合（延迟启动样本竞态）。
-fn should_skip_record(suppressed: bool, sample_generation: u64, current_generation: u64) -> bool {
-    suppressed || sample_generation != current_generation
+/// 同步实现，可在同步与异步上下文直接调用。
+pub fn record_after_transition() {
+    if let Some(app) = APP_HANDLE.get() {
+        record_now_reporting(app);
+    }
+}
+
+/// 纯函数：未定态（`starting`/`stopping`）是否应保留该工作区上次的归属。
+///
+/// 未定态尚未得出结果，此时把工作区从待恢复集合里剔除，会让**另一次**转换的
+/// 记录把它误删（用户只想改 A，却把 B 的记录也清了）。因此未定态一律沿用
+/// 上次归属，直到出现确定结果（`running` 或 `stopped`/`error`）。
+fn keep_previous_while_unsettled(phase: &str, id: &str, previous: &[String]) -> bool {
+    matches!(phase, "starting" | "stopping") && previous.iter().any(|p| p == id)
+}
+
+/// 单个工作区的一次 MCP 观测。
+struct McpObservation {
+    id: String,
+    /// 监督器报告的阶段：`running` / `starting` / `stopping` / `error` / 其它。
+    phase: String,
+    /// 端口是否确实在监听（仅在 `phase == "running"` 时有意义）。
+    port_listening: bool,
+}
+
+/// 纯函数：由观测集与上次集合推出新的「运行中」集合。
+///
+/// 规则：
+///
+/// - `running` **且**端口确实在监听 → 记入（“已确认”才算数）；
+/// - `starting`/`stopping`（未定态）→ 沿用上次归属，不因未定而抹掉；
+/// - 其余（`stopped`/`error`/未知）→ 明确剔除。
+fn running_ids_from(observations: &[McpObservation], previous: &[String]) -> Vec<String> {
+    observations
+        .iter()
+        .filter(|obs| match obs.phase.as_str() {
+            "running" => obs.port_listening,
+            "starting" | "stopping" => {
+                keep_previous_while_unsettled(&obs.phase, &obs.id, previous)
+            }
+            _ => false,
+        })
+        .map(|obs| obs.id.clone())
+        .collect()
 }
 
 /// 一次 MCP 启动尝试的结果类别。
@@ -331,53 +401,6 @@ fn classify_mcp_start(result: &crate::error::AppResult<crate::workspace::Runtime
             status.state, status.local_message
         )),
         Err(error) => McpStartOutcome::Failed(error.to_string()),
-    }
-}
-
-/// 记录当前**实际**在运行的 MCP 工作区，供下次普通启动恢复。
-///
-/// 记录的是真实观察到的监听状态，而不是「用户点过启动」的意图。
-///
-/// `generation` 是采样开始时的代次；若其间发生了启动转换（代次已变），
-/// 说明这个样本已过期，直接丢弃，避免用旧快照覆盖刚恢复好的集合。
-async fn record_running_mcp(app: &AppHandle, running: &[String], generation: u64) {
-    if recording_suppressed() {
-        return;
-    }
-    // 串行化落盘，避免并发 refresh 以旧快照覆盖新快照。
-    let _guard = RECORD_GATE.lock().await;
-    if should_skip_record(
-        recording_suppressed(),
-        generation,
-        RECORD_GENERATION.load(Ordering::SeqCst),
-    ) {
-        return;
-    }
-
-    let state = app.state::<AppState>();
-    // 读失败不得被当成「空集合」：未知状态不能抹掉历史。
-    let saved = state.with_workspaces(|store| {
-        store
-            .set_running_mcp_workspace_ids(running)
-            .map(|_| ())
-    });
-
-    match saved {
-        Ok(()) => {
-            // 成功后重置，下次失败会重新报告一次。
-            RECORD_FAILURE_REPORTED.store(false, Ordering::SeqCst);
-        }
-        Err(error) => {
-            // 每个失败片段只报告一次，避免每 5 秒弹一个对话框。
-            if !RECORD_FAILURE_REPORTED.swap(true, Ordering::SeqCst) {
-                report_failure(
-                    app,
-                    &format!("记录运行状态失败（下次启动可能无法恢复服务）：{error}"),
-                );
-            } else {
-                eprintln!("[tray] 记录运行状态仍失败：{error}");
-            }
-        }
     }
 }
 
@@ -658,35 +681,9 @@ pub fn startup_path(is_autostart_invocation: bool) -> StartupPath {
     }
 }
 
-/// 暂停 / 恢复「运行中集合」的记录。
-///
-/// 启动动作（登录自启或恢复）期间必须暂停：首轮采样发生在服务真正拉起之前，
-/// 若不暂停就会把「当前为空」写回磁盘，待恢复集合在恢复动作开始前就被抹掉。
-pub fn suppress_recording(suppress: bool) {
-    if suppress {
-        SUPPRESS_DEPTH.fetch_add(1, Ordering::SeqCst);
-    } else {
-        // 饱和减：避免不平衡的调用把计数减到负数（会让暂停永久失效）。
-        let _ = SUPPRESS_DEPTH.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |d| {
-            Some(d.saturating_sub(1))
-        });
-    }
-    // 递增代次：让「启动转换之前开始、之后才完成」的过期样本失效，
-    // 否则它会用启动前的旧快照覆盖刚恢复好的集合。
-    RECORD_GENERATION.fetch_add(1, Ordering::SeqCst);
-}
-
 /// 当前是否处于暂停记录状态。
 fn recording_suppressed() -> bool {
     SUPPRESS_DEPTH.load(Ordering::SeqCst) > 0
-}
-
-/// 启动动作结束后恢复记录，并立即重采样一次。
-///
-/// 先重采样再记录，保证磁盘上是**启动完成后**的真实状态，而不是中间态。
-pub async fn resume_recording_and_refresh(app: &AppHandle) {
-    suppress_recording(false);
-    refresh(app).await;
 }
 
 /// 普通启动时恢复上次实际在运行的 MCP。
@@ -788,6 +785,15 @@ mod tests {
 
     const BASE: &str = "开机自启并启动 MCP/隧道";
 
+    /// 构造一次观测，便于组合场景。
+    fn obs(id: &str, phase: &str, port_listening: bool) -> McpObservation {
+        McpObservation {
+            id: id.to_string(),
+            phase: phase.to_string(),
+            port_listening,
+        }
+    }
+
     #[test]
     fn single_workspace_hides_redundant_name() {
         // 只有一个工作区时名称是冗余的：不应出现括号。
@@ -826,40 +832,91 @@ mod tests {
     }
 
     #[test]
-    fn delayed_sample_spanning_a_transition_is_discarded() {
-        // 延迟启动样本竞态：采样在转换前开始（代次 7），转换后（代次 8）才落盘。
-        // 必须丢弃，否则会用启动前的旧快照覆盖刚恢复好的集合。
-        assert!(
-            should_skip_record(false, 7, 8),
-            "跨越启动转换的过期样本必须丢弃"
-        );
-        // 代次一致 → 可以记录。
-        assert!(!should_skip_record(false, 8, 8));
-    }
-
-    #[test]
-    fn suppressed_recording_always_skips() {
-        // 启动动作期间暂停：即使代次相同也不能记录。
-        assert!(should_skip_record(true, 8, 8));
-        assert!(should_skip_record(true, 7, 8));
-    }
-
-    #[test]
-    fn suppression_is_depth_counted_not_boolean() {
+    fn suppression_is_depth_counted_and_cancellation_safe() {
         // 启动恢复与内部重启可能嵌套：内层结束不得解除外层的暂停。
         assert_eq!(SUPPRESS_DEPTH.load(Ordering::SeqCst), 0, "测试间不得残留");
-        suppress_recording(true);
+        let outer = SuppressGuard::new();
         assert!(recording_suppressed());
-        suppress_recording(true);
-        assert!(recording_suppressed(), "两层暂停仍应生效");
-        suppress_recording(false);
-        assert!(recording_suppressed(), "内层结束不得解除外层暂停");
-        suppress_recording(false);
-        assert!(!recording_suppressed());
-        // 不平衡的多余解除不得把计数减到负数（那会让暂停永久失效）。
-        suppress_recording(false);
+        {
+            let _inner = SuppressGuard::new();
+            assert!(recording_suppressed(), "两层暂停仍应生效");
+        }
+        assert!(
+            recording_suppressed(),
+            "内层令牌 Drop 后不得解除外层暂停"
+        );
+        drop(outer);
         assert!(!recording_suppressed());
         assert_eq!(SUPPRESS_DEPTH.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn unsettled_state_keeps_previous_membership() {
+        // 未定态（starting/stopping）不能因「暂时没在监听」而被抹掉，
+        // 否则另一次转换记录会把它从待恢复集合里踢出。
+        let previous = vec!["w".to_string()];
+        assert!(keep_previous_while_unsettled("starting", "w", &previous));
+        assert!(keep_previous_while_unsettled("stopping", "w", &previous));
+        // 未定态且上次也不在集合里 → 不新增。
+        assert!(!keep_previous_while_unsettled("starting", "other", &previous));
+        // 已定态不保留：running 走自己的分支，stopped/error 明确剔除。
+        assert!(!keep_previous_while_unsettled("running", "w", &previous));
+        assert!(!keep_previous_while_unsettled("stopped", "w", &previous));
+        assert!(!keep_previous_while_unsettled("error", "w", &previous));
+    }
+
+    #[test]
+    fn concurrent_transition_of_one_workspace_does_not_erase_another() {
+        // 用户只对 A 做了转换；B 此时处于未定态（starting）。
+        // B 不得因为 A 的转换记录而被剔除。
+        let previous = vec!["A".to_string(), "B".to_string()];
+        let observations = vec![
+            obs("A", "stopped", false), // A 已确认停止
+            obs("B", "starting", false), // B 未定
+        ];
+        assert_eq!(
+            running_ids_from(&observations, &previous),
+            vec!["B".to_string()],
+            "B 的未定态必须沿用上次归属，不得被 A 的转换连带清掉"
+        );
+    }
+
+    #[test]
+    fn immediate_stop_is_persisted_not_kept() {
+        // 刚点停止：监督器可能已报 stopped，此时必须**立即剔除**，
+        // 不能因为端口尚未释放而继续算作运行中。
+        let previous = vec!["A".to_string()];
+        let observations = vec![obs("A", "stopped", true)]; // 端口还在，但状态已停
+        assert!(
+            running_ids_from(&observations, &previous).is_empty(),
+            "已确认停止必须立即落盘，不被端口残留干扰"
+        );
+    }
+
+    #[test]
+    fn running_without_listening_port_is_not_recorded() {
+        // 报 running 但端口没在听（假活）不得记入，否则下次会误恢复。
+        let observations = vec![obs("A", "running", false)];
+        assert!(running_ids_from(&observations, &[]).is_empty());
+        // 真在听才算。
+        let observations = vec![obs("A", "running", true)];
+        assert_eq!(running_ids_from(&observations, &[]), vec!["A".to_string()]);
+    }
+
+    #[test]
+    fn restart_cancellation_does_not_leak_suppression() {
+        // 内部重启在 await 处被取消时，令牌的 Drop 仍须执行，
+        // 否则暂停会永久生效（此后再也不记录）。
+        assert_eq!(SUPPRESS_DEPTH.load(Ordering::SeqCst), 0, "测试间不得残留");
+        {
+            let _suppress = SuppressGuard::new();
+            assert!(recording_suppressed());
+            // 模拟任务在此被取消：作用域退出等价于 Drop。
+        }
+        assert!(
+            !recording_suppressed(),
+            "取消后不得泄漏暂停（否则记录永久失效）"
+        );
     }
 
     #[test]
@@ -911,37 +968,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn only_listening_mcp_is_recorded_as_running() {
-        // 记录「实际在跑」的集合：只有 Healthy（MCP 确实在监听）算运行。
-        // 启动中 / MCP 错误 / 已停止都不能被记成运行，否则下次会误恢复。
-        let listening = WorkspaceSample {
-            id: "a".into(),
-            name: "a".into(),
-            mcp: ServiceSample::Healthy,
-            tunnel_configured: false,
-            tunnel_online: false,
-        };
-        assert!(state::mcp_listening(&listening));
-
-        for mcp in [
-            ServiceSample::Stopped,
-            ServiceSample::Transitioning,
-            ServiceSample::McpError,
-        ] {
-            let sample = WorkspaceSample {
-                id: "a".into(),
-                name: "a".into(),
-                mcp,
-                tunnel_configured: false,
-                tunnel_online: false,
-            };
-            assert!(
-                !state::mcp_listening(&sample),
-                "{mcp:?} 不应被记为运行中"
-            );
-        }
-    }
 
     #[test]
     fn multi_workspace_without_name_falls_back_safely() {

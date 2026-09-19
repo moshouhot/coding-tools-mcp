@@ -125,7 +125,7 @@ pub async fn delete_workspace(state: State<'_, AppState>, id: String) -> AppResu
     }
     // 工作区已删除，立即重记运行集合，把这个 id 从待恢复集合里清掉，
     // 避免下次启动把它当成「目标已失效」再报一次。
-    crate::tray::record_current_state_async().await;
+    crate::tray::record_after_transition();
     match AuditStore::open_default() {
         Ok(audit) => {
             if let Err(error) = audit.remove_workspace_records(&id) {
