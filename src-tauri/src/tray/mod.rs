@@ -1,4 +1,4 @@
-//! 系统托盘：状态图标、状态菜单行，以及“开机自启并启动 MCP/隧道”。
+//! 系统托盘：状态图标、状态菜单行，以及“开机自启”。
 //!
 //! 图标只有两态：有 MCP 在监听时用原图标，否则用灰度图标；状态行文字与
 //! tooltip 给出 MCP 与隧道细节，避免只靠颜色传达状态。失败通过系统对话框提示。
@@ -462,8 +462,8 @@ fn sync_autostart_item(app: &AppHandle) {
 
 /// 自启菜单项文案。
 ///
-/// 只有一个工作区时名称是冗余的，省略；多工作区时才标出绑定的工作区名，
-/// 避免用户搞不清登录时会启动哪一个。
+/// 主文案就是「开机自启」——勾选项表达的是「随系统启动」这一件事，
+/// 登录时会启动哪个工作区是次要信息，只在多工作区时附上以避免歧义。
 ///
 /// 绑定已失效时必须明确告知，而不是回退显示成另一个工作区。
 fn autostart_label_text(
@@ -471,7 +471,7 @@ fn autostart_label_text(
     target: &crate::data::AutostartTarget,
     bound_name: Option<&str>,
 ) -> String {
-    const BASE: &str = "开机自启并启动 MCP/隧道";
+    const BASE: &str = "开机自启";
     match target {
         crate::data::AutostartTarget::Bound(_) if workspace_count > 1 => {
             let name = bound_name.unwrap_or("未知工作区");
@@ -498,11 +498,11 @@ fn autostart_label(app: &AppHandle) -> String {
     match info {
         Ok((count, target, name)) => autostart_label_text(count, &target, name.as_deref()),
         // 读不到状态时不要假装已绑定：退回到中性文案。
-        Err(_) => "开机自启并启动 MCP/隧道".to_string(),
+        Err(_) => "开机自启".to_string(),
     }
 }
 
-/// 勾选/取消“开机自启并启动 MCP/隧道”。
+/// 勾选/取消“开机自启”。
 fn on_toggle_autostart(app: &AppHandle) {
     let state = app.state::<AppState>();
     let ops = LiveOps { state: &state };
@@ -783,7 +783,7 @@ mod tests {
     use super::*;
     use crate::data::AutostartTarget;
 
-    const BASE: &str = "开机自启并启动 MCP/隧道";
+    const BASE: &str = "开机自启";
 
     /// 构造一次观测，便于组合场景。
     fn obs(id: &str, phase: &str, port_listening: bool) -> McpObservation {
