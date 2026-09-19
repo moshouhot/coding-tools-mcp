@@ -16,23 +16,72 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `tray/mod.rs` | 托盘构建、菜单事件、5 秒轮询、状态应用、自启开关与自启启动路径 |
+| `tray/mod.rs` | 托盘构建、菜单事件、5 秒轮询、状态应用、自启开关、启动路径与运行状态记录 |
 | `tray/icon.rs` | 两态图标：运行中用原图标原样，未运行用同一图标的灰度版 |
 | `tray/autostart.rs` | HKCU Run 读写、命令构造、`--autostart` 参数识别、可替换后端（便于测试） |
 | `tray/state.rs` | 采样模型与聚合：单工作区 → 两态总状态 + tooltip + summary |
 
-`lib.rs` 只保留 `setup_tray` 薄封装，并在 `setup` 中启动轮询、按 `--autostart` 触发自启启动。
+`lib.rs` 只保留 `setup_tray` 薄封装，并在 `setup` 中启动轮询、选择启动路径。
+
+## 启动路径（互斥）
+
+两条路径**绝不共存**，由纯函数 `startup_path(is_autostart)` 决定，便于直接断言互斥性：
+
+| 启动方式 | 路径 | 行为 |
+| --- | --- | --- |
+| `--autostart`（登录自启） | `StartupPath::Autostart` | 隐藏窗口，只启动**绑定工作区**；不读历史运行集合 |
+| 普通启动 | `StartupPath::Restore` | 窗口正常显示，恢复**上次实际在运行的 MCP**；不读自启绑定 |
+
+## 记住上次运行状态
+
+### 记录时机：变化时，而不是退出时
+
+用户初始表述为「退出时记住」，但**退出时快照撑不住强杀 / 断电 / 崩溃**。
+改为在**状态变化时**记录：5 秒轮询本就已经在采样真实监听状态，
+顺手把「确实在监听」的集合写盘即可，代价为零且对异常退出鲁棒。
+
+记录的是**实际观测值**（MCP 真的在监听），不是「用户点过启动」的意图。
+
+另外在 `RunEvent::Exit` 补一次**只读快照**（`record_running_now`）：
+轮询最多有 5 秒延迟，若用户刚停止 MCP 就退出，磁盘上会留着陈旧值；
+退出时补一次可消除这个窗口。该函数不调 `refresh_mcp`（它会改状态并在失效时
+spawn 清理任务，退出阶段 spawn 可能 panic），只读相位 + 实际端口监听。
+
+> 注意：进程退出**不会**主动停服务（仓库内无相关 Drop / 退出钩子），
+> 所以退出时端口仍在监听，快照反映的是真实最终状态。
+
+### 防抖与防抖错的边界
+
+- **内容未变不写盘**：`normalize_running_ids` 先归一化（去空白、去空、去重、排序），
+  再与内存值比较；相同则直接返回，避免每 5 秒重写 `profiles.json`。
+- **落盘失败回滚内存**：`write_running_ids_with_rollback` 在 `save()` 失败时恢复旧值，
+  不留下「内存有、磁盘无」的不一致。
+- **启动期间暂停记录**：首轮采样发生在服务真正拉起**之前**，若不暂停，
+  会把「当前为空」写回磁盘，**待恢复集合在恢复动作开始前就被抹掉**。
+  因此 `suppress_recording(true)` 在 `setup` 里同步置位（早于轮询首帧），
+  启动动作结束后再 `resume_recording_and_refresh`（先重采样再记录，落到的是完成态）。
+- **恢复绝不回退**：`restorable_mcp_workspace_ids` 丢弃已删除的 id，
+  不拿 last/first 顶替；全部失效则什么也不启动。
+
+### 恢复失败的可见性
+
+逐个启动，把成功与失败分别汇总：**失败汇总成一次对话框**，
+避免多工作区时弹出多个弹窗；成功只记日志。
+每个工作区启动后仍需回查隧道实际监督状态（隧道错误在 `start_mcp_service` 中被吞掉）。
 
 ## 状态模型
 
 ```text
-WorkspaceSample { name, mcp, tunnel_configured, tunnel_online }
+WorkspaceSample { id, name, mcp, tunnel_configured, tunnel_online }
         │
         ├─ classify(): Healthy + 配置了隧道但未连 → TunnelOffline
         │               McpError 保持独立，不归为「运行中」
         ▼
 aggregate(Vec<WorkspaceSample>) → TrayState { level, tooltip, summary, any_running, workspaces }
 ```
+
+`mcp_listening()` 是「MCP 是否确实在监听」的**单一来源**，
+图标档位与待恢复集合共用它，避免两处判定漂移。
 
 档位判定（图标只有两态）：
 
@@ -138,6 +187,10 @@ aggregate(Vec<WorkspaceSample>) → TrayState { level, tooltip, summary, any_run
 | 图标仅在**档位变化**时 `set_icon`，tooltip/summary 仅在内容变化时更新 | 避免每 5 秒无谓重绘与托盘闪烁 |
 | 图标只做两态，不做重新着色 | 运行中保持原作者图标样式，用户一眼可辨；不擅自改动品牌配色 |
 | 单工作区不显示工作区名 | 只有一个工作区时名称是冗余噪音；多工作区时才标出绑定目标以避免歧义 |
+| 运行状态**变化时**记录，而非退出时快照 | 退出时快照撑不住强杀 / 断电 / 崩溃；轮询已在采样，顺手记录代价为零 |
+| 记录**实际观测值**而非「启动意图」 | 意图会与实际脱节（启动失败也会被记成「应该恢复」），观测值总是真实 |
+| 恢复严格不启用在存 id，绝不回退 | 与自启绑定同理：静默换目标比不启动更坏 |
+| 启动期间暂停记录 | 首轮采样早于服务拉起，否则会把待恢复集合提前抹掉 |
 | 失败用系统对话框，而非菜单里的提示行 | 失败必须真的被看到；提示行常驻菜单反而干扰 |
 | 开启与启动用**两个不同**的目标解析函数 | 开启只用用户明确选中的工作区；登录启动严格用绑定项，否则会静默换目标 |
 | 非 Windows 不展示自启菜单项 | 不给用户一个必然失败的操作 |
@@ -146,7 +199,10 @@ aggregate(Vec<WorkspaceSample>) → TrayState { level, tooltip, summary, any_run
 
 ## 兼容性与风险
 
-- `autostart_workspace_id` 使用 `#[serde(default)]`，旧 `profiles.json` 可直接反序列化，无需迁移。
+- `autostart_workspace_id` 与 `running_mcp_workspace_ids` 均使用 `#[serde(default)]`，旧 `profiles.json` 可直接反序列化，无需迁移。
+- **行为变更**：普通启动从「从不自动启动服务」改为「恢复上次实际在运行的 MCP」。首次升级后该字段为空，因此第一次普通启动**不会**自动拉起任何服务；之后才开始记录。
+- 恢复只影响 MCP，不涉及 Actions；不改变窗口可见性。
+- 不覆盖强杀 / 断电的**恢复中**状态：启动动作进行到一半被杀时，磁盘上仍是上一次完成态，下次会重试。
 - 非 Windows 平台：`autostart` 的 win 后端为桩实现（读 `None`、写 `false`），菜单项仍存在但不会真正生效；不影响 macOS 既有行为。
 - 端口被占用等启动失败由 `start_mcp_by_id` 既有错误路径返回，并通过系统对话框可见，不静默改启动其它工作区。
 

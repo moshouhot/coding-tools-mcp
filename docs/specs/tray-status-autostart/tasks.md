@@ -69,20 +69,26 @@
 - [x] 自启启动路径：隐藏窗口 + 启动绑定工作区 MCP + 失败弹系统对话框
 - [x] 菜单文案自适应：仅多工作区时附工作区名；绑定失效始终告知
 - [x] 单测：单/多工作区、未绑定、目标失效、缺名回退
+- [x] 运行状态记录：变化时落盘、内容未变不写、启动期间暂停
+- [x] 退出时补一次只读快照（消除轮询 5 秒延迟导致的陈旧值）
+- [x] 普通启动恢复：逐个启动、失败汇总为一次提示、绝不回退
+- [x] 启动路径互斥：`startup_path()` 纯函数 + 单测
+- [x] 单测：路径互斥、仅监听中的 MCP 计入运行
 
 ### T5 接线与持久化
 
-- [x] `lib.rs`：声明 `mod tray`、`setup_tray` 转调、挂轮询与 `--autostart`
+- [x] `lib.rs`：声明 `mod tray`、`setup_tray` 转调、挂轮询、按 `startup_path` 分流
 - [x] `commands/runtime.rs`：`pub(crate) start_mcp_by_id`
-- [x] `data/model.rs`：`autostart_workspace_id`（`#[serde(default)]`）
+- [x] `data/model.rs`：`autostart_workspace_id`、`running_mcp_workspace_ids`（均 `#[serde(default)]`）
 - [x] `data/store.rs`：`autostart_target_id` / `set_autostart_workspace` / `clear_autostart_workspace`
+- [x] `data/store.rs`：`set_running_mcp_workspace_ids`（变更才写 + 回滚）/ `restorable_mcp_workspace_ids`
 - [x] `Cargo.toml`：`Win32_System_Registry`
 
 ### T6 验证
 
 - [x] `cargo test --lib tray::`（37 项全通过）
 - [x] `cargo test --lib data::store::`（8 项，含目标删除不回退、落盘失败回滚）
-- [x] `cargo test --lib`（本机 216 passed / 0 failed）
+- [x] `cargo test --lib`（本机 225 passed / 0 failed）
 - [x] `cargo clippy --lib`（`src/tray/` 零警告；其余警告均为既有）
 - [x] `npm run check`（仅 1 项既有失败，见下）
 - [x] `npm run tauri -- build --bundles nsis`（产出安装包）
@@ -95,9 +101,9 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| `cargo test --lib tray::` | 37 passed / 0 failed |
+| `cargo test --lib tray::` | 39 passed / 0 failed |
 | `cargo test --lib data::store::` | 8 passed / 0 failed（含「目标删除不回退」回归） |
-| `cargo test --lib`（全量） | 216 passed / 0 failed |
+| `cargo test --lib`（全量） | 225 passed / 0 failed |
 | `cargo clippy --lib` | `src/tray/` 0 警告；其余警告均为既有 |
 | `npm run check` | 1 error：`vite.config.js` 的 `@ts-expect-error`（**既有失败**） |
 | `npm run tauri -- build --bundles nsis` | 成功（退出码 0），产出 `Coding Tools MCP_0.2.3_x64-setup.exe` |
@@ -128,6 +134,15 @@
 | 多工作区自启文案 | 附带绑定工作区名，避免歧义 |
 | 绑定失效（单工作区亦然） | 显示「目标已失效」，不被吞掉 |
 | 含空格/中文/超长路径 | 自启命令引号包裹且引号成对 |
+| 旧配置无 `running_mcp_workspace_ids` | 能直接反序列化，默认空集合，无需迁移 |
+| 运行集合归一化 | 不同顺序 / 空白 / 重复 → 同一字节，保证「未变不写盘」比较可靠 |
+| 运行集合内容未变 | 返回 `false` 且**不调用**落盘（避免每 5 秒重写配置） |
+| 运行集合内容变化 | 返回 `true` 且落盘 |
+| 运行集合落盘失败 | 内存回滚为旧集合，不留「内存有、磁盘无」 |
+| 全部停止 | 空集合可写回（否则会一直恢复上次服务） |
+| 已删除工作区在恢复集合中 | 丢弃该 id，**不回退**到其它工作区；全失效则空 |
+| 启动路径互斥 | `--autostart` → `Autostart`，普通启动 → `Restore`，两者不相等 |
+| 记录范围 | 仅 `Healthy`（MCP 确实在监听）计入；启动中 / MCP 错误 / 已停止均不计 |
 
 ### 既有失败（与本次改动无关，已在干净 HEAD 上复现）
 
@@ -137,8 +152,8 @@
    `upstream.rs`、`process.rs`、`file.rs`、`cloudflare.rs`、`workspace/model.rs`），
    **均不在本次改动文件中**；CI 不跑 clippy。
 
-> 本次交付的全量测试结果为 **216 passed / 0 failed**。
-> 与本次改动直接相关的 `tray::`（37 项）与 `data::store::`（8 项）全部通过。
+> 本次交付的全量测试结果为 **225 passed / 0 failed**。
+> 与本次改动直接相关的 `tray::`（39 项）与 `data::store::`（15 项）全部通过。
 >
 > 早期记录曾提到 `tools::exec::tests::windows_workspace_scripts_and_python_unicode_execute_successfully`
 > 在本机稳定失败；本次复测已连续 4 次通过，疑与 Python 冷启动时序相关，

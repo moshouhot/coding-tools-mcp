@@ -29,6 +29,9 @@ pub enum ServiceSample {
 /// 一个工作区的采样。
 #[derive(Debug, Clone)]
 pub struct WorkspaceSample {
+    /// 工作区 id（用于记录待恢复的运行中集合）。
+    #[allow(dead_code)]
+    pub id: String,
     /// 工作区名称（tooltip 与自启文案使用）。
     #[allow(dead_code)]
     pub name: String,
@@ -51,6 +54,16 @@ pub struct TrayState {
     /// 各工作区采样明细。测试与外部复用。
     #[allow(dead_code)]
     pub workspaces: Vec<WorkspaceSample>,
+}
+
+/// 单个工作区的 MCP 是否**确实在监听**。
+///
+/// 采样阶段（`phase_of`）会把 MCP 实际监听的相位映射为 [`ServiceSample::Healthy`]，
+/// 所以这里只需看这一种。MCP 错误、启动中、已停止都不算运行。
+///
+/// 图标档位与「待恢复的运行中集合」共用此判定，避免两处逻辑漂移。
+pub fn mcp_listening(sample: &WorkspaceSample) -> bool {
+    matches!(sample.mcp, ServiceSample::Healthy)
 }
 
 /// 由单个工作区采样推导其服务档位。
@@ -178,6 +191,7 @@ mod tests {
 
     fn sample(mcp: ServiceSample, configured: bool, online: bool) -> WorkspaceSample {
         WorkspaceSample {
+            id: "w".into(),
             name: "w".into(),
             mcp,
             tunnel_configured: configured,

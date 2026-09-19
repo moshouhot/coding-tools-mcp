@@ -41,6 +41,12 @@ static AUTOSTART_ITEM: OnceLock<CheckMenuItem<Wry>> = OnceLock::new();
 /// 最近一次聚合结果，用于避免无变化时重复设置图标。
 static LAST_STATE: Mutex<Option<TrayState>> = Mutex::new(None);
 
+/// 启动恢复期间暂停「运行中集合」的记录。
+///
+/// 首轮采样发生在恢复开始之前，此时什么都还没启动；若不暂停，会把「当前为空」
+/// 写回磁盘，待恢复集合在恢复动作真正开始前就被抹掉。
+static RECORD_SUPPRESSED: AtomicBool = AtomicBool::new(false);
+
 /// 构建托盘菜单并挂载事件。
 pub fn setup(app: &tauri::App) -> tauri::Result<()> {
     let status = MenuItem::with_id(app, ID_STATUS, "状态：采样中…", false, None::<&str>)?;
@@ -163,6 +169,7 @@ async fn sample(app: &AppHandle) -> TrayState {
         .zip(phases)
         .zip(tunnels)
         .map(|((profile, phase), (configured, online))| WorkspaceSample {
+            id: profile.id.clone(),
             name: profile.name.clone(),
             mcp: phase,
             tunnel_configured: configured,
@@ -170,7 +177,75 @@ async fn sample(app: &AppHandle) -> TrayState {
         })
         .collect();
 
+    record_running_mcp(app, &samples);
+
     state::aggregate(samples)
+}
+
+/// 立即根据当前监督器状态记录运行中的 MCP。
+///
+/// **严格只读**：不调 `refresh_mcp`（它会改监督器状态并在失效时 spawn 清理任务），
+/// 只读相位 + 实际端口监听，因此可在退出回调里安全调用（退出阶段 spawn 可能 panic）。
+///
+/// 用途：轮询最多有 5 秒延迟，若用户刚停止 MCP 就退出，磁盘上会留着陈旧的
+/// 「运行中」值；退出时补一次快照可消除这个窗口。进程退出不会主动停服务，
+/// 所以此刻端口仍在监听，采样结果是真实的最终状态。
+pub fn record_running_now(app: &AppHandle) {
+    if RECORD_SUPPRESSED.load(Ordering::SeqCst) {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let profiles: Vec<WorkspaceProfile> = state
+        .with_workspaces(|store| Ok(store.list().to_vec()))
+        .unwrap_or_default();
+
+    let running: Vec<String> = profiles
+        .iter()
+        .filter(|profile| {
+            // 相位必须为 running，且端口确实在监听：与轮询口径一致，但不改状态。
+            let phase_running = state
+                .with_runtime(|runtime| Ok(runtime.mcp_status(profile).state))
+                .map(|phase| phase == "running")
+                .unwrap_or(false);
+            if !phase_running {
+                return false;
+            }
+            crate::platform::platform()
+                .find_pid_listening_on_port(profile.runtime.local_port)
+                .ok()
+                .flatten()
+                .is_some()
+        })
+        .map(|profile| profile.id.clone())
+        .collect();
+
+    let _ = state.with_workspaces(|store| {
+        store.set_running_mcp_workspace_ids(&running).map(|_| ())
+    });
+}
+
+/// 记录当前**实际**在运行的 MCP 工作区，供下次普通启动恢复。
+///
+/// 记录的是真实观察到的监听状态，而不是「用户点过启动」的意图，因此强杀 /
+/// 断电后依旧准确。仅在集合真正变化时落盘（`set_running_mcp_workspace_ids`
+/// 内部比较），所以每 5 秒轮询不会反复写文件。
+///
+/// 采集侧（`phase_of` → `refresh_mcp`）会校验端口是否真的在监听，
+/// 所以 `Healthy` 即代表 MCP 确实在跑。
+fn record_running_mcp(app: &AppHandle, samples: &[WorkspaceSample]) {
+    if RECORD_SUPPRESSED.load(Ordering::SeqCst) {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let running: Vec<String> = samples
+        .iter()
+        .filter(|sample| state::mcp_listening(sample))
+        .map(|sample| sample.id.clone())
+        .collect();
+
+    let _ = state.with_workspaces(|store| {
+        store.set_running_mcp_workspace_ids(&running).map(|_| ())
+    });
 }
 
 /// 读取单个工作区的 MCP 实际阶段。
@@ -429,6 +504,94 @@ pub async fn run_autostart_startup(app: AppHandle) {
     refresh(&app).await;
 }
 
+/// 启动路径。两条路径**互斥**，绝不同时生效。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartupPath {
+    /// 登录自启（`--autostart`）：只启动绑定的那个工作区，不读历史运行集合。
+    Autostart,
+    /// 普通启动：恢复上次实际在运行的 MCP 集合，不读自启绑定。
+    Restore,
+}
+
+/// 纯函数：根据是否 `--autostart` 调用选择启动路径。
+///
+/// 抽成纯函数是为了能直接断言两条路径的互斥性，避免以后被改成一个
+/// 「两个都跑」的分支。
+pub fn startup_path(is_autostart_invocation: bool) -> StartupPath {
+    if is_autostart_invocation {
+        StartupPath::Autostart
+    } else {
+        StartupPath::Restore
+    }
+}
+
+/// 暂停 / 恢复「运行中集合」的记录。
+///
+/// 启动动作（登录自启或恢复）期间必须暂停：首轮采样发生在服务真正拉起之前，
+/// 若不暂停就会把「当前为空」写回磁盘，待恢复集合在恢复动作开始前就被抹掉。
+pub fn suppress_recording(suppress: bool) {
+    RECORD_SUPPRESSED.store(suppress, Ordering::SeqCst);
+}
+
+/// 启动动作结束后恢复记录，并立即重采样一次。
+///
+/// 先重采样再记录，保证磁盘上是**启动完成后**的真实状态，而不是中间态。
+pub async fn resume_recording_and_refresh(app: &AppHandle) {
+    suppress_recording(false);
+    refresh(app).await;
+}
+
+/// 普通启动时恢复上次实际在运行的 MCP。
+///
+/// 只启动上次**确实在监听**的工作区，且**绝不回退**到其它工作区；
+/// 已被删除的 id 会被 `restorable_mcp_workspace_ids` 丢弃。
+/// 逐个启动，失败汇总成一次可见提示，避免多工作区时弹出多个对话框。
+pub async fn run_restore_startup(app: AppHandle) {
+    let state = app.state::<AppState>();
+    let ids = state
+        .with_workspaces(|store| Ok(store.restorable_mcp_workspace_ids()))
+        .unwrap_or_default();
+
+    let mut started: Vec<String> = Vec::new();
+    let mut problems: Vec<String> = Vec::new();
+
+    for id in &ids {
+        let name = state
+            .with_workspaces(|store| Ok(store.get(id).map(|p| p.name.clone())))
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| id.clone());
+
+        match crate::commands::runtime::start_mcp_by_id(&state, id).await {
+            // 启动成功不等于隧道已连：隧道错误在 start_mcp_service 中被吞掉，
+            // 因此必须回查实际监督状态，避免把失败报成全部成功。
+            Ok(status) if status.state == "running" => match tunnel_online(&state, id).await {
+                Some(true) => started.push(format!("「{name}」MCP 与隧道")),
+                Some(false) => {
+                    started.push(format!("「{name}」MCP"));
+                    problems.push(format!("「{name}」隧道未能连接（已配置但未在线）"));
+                }
+                None => started.push(format!("「{name}」MCP（未配置隧道）")),
+            },
+            Ok(status) => problems.push(format!("「{name}」：{}", status.local_message)),
+            Err(error) => problems.push(format!("「{name}」：{error}")),
+        }
+    }
+
+    if !started.is_empty() {
+        report_ok(&format!("已恢复上次运行的 MCP：{}", started.join("、")));
+    }
+    if !problems.is_empty() {
+        report_failure(
+            &app,
+            &format!(
+                "恢复上次运行的 MCP 时部分失败：\n{}",
+                problems.join("\n")
+            ),
+        );
+    }
+}
+
 /// 回查某工作区的 MCP 隧道实际是否在线。
 ///
 /// 返回 `None` 表示该工作区未配置隧道。注意：这里只验证本机隧道进程/会话存活，
@@ -485,6 +648,46 @@ mod tests {
     fn unbound_never_shows_parentheses() {
         for count in [1, 5] {
             assert_eq!(autostart_label_text(count, &AutostartTarget::Unbound, None), BASE);
+        }
+    }
+
+    #[test]
+    fn startup_paths_are_mutually_exclusive() {
+        // 登录自启走 Autostart，普通启动走 Restore；绝不能两个都跑。
+        assert_eq!(startup_path(true), StartupPath::Autostart);
+        assert_eq!(startup_path(false), StartupPath::Restore);
+        assert_ne!(startup_path(true), startup_path(false));
+    }
+
+    #[test]
+    fn only_listening_mcp_is_recorded_as_running() {
+        // 记录「实际在跑」的集合：只有 Healthy（MCP 确实在监听）算运行。
+        // 启动中 / MCP 错误 / 已停止都不能被记成运行，否则下次会误恢复。
+        let listening = WorkspaceSample {
+            id: "a".into(),
+            name: "a".into(),
+            mcp: ServiceSample::Healthy,
+            tunnel_configured: false,
+            tunnel_online: false,
+        };
+        assert!(state::mcp_listening(&listening));
+
+        for mcp in [
+            ServiceSample::Stopped,
+            ServiceSample::Transitioning,
+            ServiceSample::McpError,
+        ] {
+            let sample = WorkspaceSample {
+                id: "a".into(),
+                name: "a".into(),
+                mcp,
+                tunnel_configured: false,
+                tunnel_online: false,
+            };
+            assert!(
+                !state::mcp_listening(&sample),
+                "{mcp:?} 不应被记为运行中"
+            );
         }
     }
 

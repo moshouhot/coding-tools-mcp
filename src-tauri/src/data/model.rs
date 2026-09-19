@@ -15,6 +15,12 @@ pub struct AppData {
     /// 开机自启绑定并启动的工作区 id。空表示未绑定。
     #[serde(default)]
     pub autostart_workspace_id: String,
+    /// 上次**实际**在运行的 MCP 工作区 id。
+    ///
+    /// 记录的是真实观察到的运行状态（而非“用户点过启动”的意图），
+    /// 因此强杀 / 断电后依旧准确。普通启动时据此恢复。
+    #[serde(default)]
+    pub running_mcp_workspace_ids: Vec<String>,
     #[serde(default)]
     pub download: DownloadConfig,
     #[serde(default)]
