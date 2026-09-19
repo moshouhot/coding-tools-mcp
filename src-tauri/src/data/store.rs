@@ -156,7 +156,19 @@ impl DataStore {
     ///
     /// 只在内容真正变化时落盘，避免每次轮询都写文件。返回 `true` 表示已写入。
     pub fn set_running_mcp_workspace_ids(&mut self, ids: &[String]) -> AppResult<bool> {
-        write_running_ids_with_rollback(&mut self.data, ids, save)
+        let Some(next) = pending_running_ids(&self.data, ids) else {
+            // 内容未变：不落盘（否则每 5 秒轮询都会重写 profiles.json）。
+            return Ok(false);
+        };
+        persist_running_ids_with_rollback(&mut self.data, next, save_locked)?;
+        Ok(true)
+    }
+
+    /// 上次实际在运行时，但工作区已被删除的 id。
+    ///
+    /// 用于把「待恢复目标已失效」显式报告出来，而不是静默丢弃。
+    pub fn missing_running_mcp_workspace_ids(&self) -> Vec<String> {
+        missing_running_ids_of(&self.data)
     }
 
     /// 过滤掉已不存在的工作区，返回仍然有效的待恢复 id。
@@ -341,27 +353,43 @@ fn selected_workspace_id_of(data: &AppData) -> String {
     String::new()
 }
 
-/// 纯函数：写入运行中集合，仅在内容变化时落盘，落盘失败则回滚内存。
+/// 纯函数：内容有变化时返回归一化后的新集合，未变则返回 `None`。
 ///
-/// 返回 `true` 表示确实写了盘（内容有变化且落盘成功）。
-/// 抽成纯函数以便注入失败的持久化实现，验证「内容未变不写盘」与
-/// 「落盘失败不得让内存与磁盘不一致」两个行为，而不只是看返回值。
-fn write_running_ids_with_rollback(
-    data: &mut AppData,
-    ids: &[String],
-    persist: impl FnOnce(&AppData) -> AppResult<()>,
-) -> AppResult<bool> {
+/// 把「未变不写盘」的判断独立出来，既保证每 5 秒轮询不重写文件，
+/// 又能在不触碰真实配置文件的前提下单测。
+fn pending_running_ids(data: &AppData, ids: &[String]) -> Option<Vec<String>> {
     let next = normalize_running_ids(ids);
     if next == normalize_running_ids(&data.running_mcp_workspace_ids) {
-        return Ok(false);
+        None
+    } else {
+        Some(next)
     }
+}
+
+/// 持锁落盘。
+///
+/// 仓库其它写入路径都经 `DATA_FILE_LOCK`（见 `DataStore::save`），
+/// 记录运行状态的入口也必须一致，否则会与并发写入互相覆盖。
+fn save_locked(data: &AppData) -> AppResult<()> {
+    let _guard = lock_data_file()?;
+    save(data)
+}
+
+/// 纯函数：把新集合写入 `data`，用给定 persist 落盘；失败则回滚内存。
+///
+/// 与 `write_binding_with_rollback` 同构，保证「落盘失败不得让内存与磁盘不一致」。
+fn persist_running_ids_with_rollback(
+    data: &mut AppData,
+    next: Vec<String>,
+    persist: impl FnOnce(&AppData) -> AppResult<()>,
+) -> AppResult<()> {
     let previous = std::mem::replace(&mut data.running_mcp_workspace_ids, next);
     if let Err(error) = persist(data) {
         // 落盘失败 → 回滚内存，避免内存里留下一个没写进磁盘的值。
         data.running_mcp_workspace_ids = previous;
         return Err(error);
     }
-    Ok(true)
+    Ok(())
 }
 
 /// 纯函数：归一化待持久化的运行中工作区 id 集合。
@@ -384,6 +412,14 @@ fn restorable_ids_of(data: &AppData) -> Vec<String> {
     normalize_running_ids(&data.running_mcp_workspace_ids)
         .into_iter()
         .filter(|id| data.profiles.iter().any(|p| p.id == *id))
+        .collect()
+}
+
+/// 纯函数：上次记录过、但工作区已被删除的 id（用于显式报告，而非静默丢弃）。
+fn missing_running_ids_of(data: &AppData) -> Vec<String> {
+    normalize_running_ids(&data.running_mcp_workspace_ids)
+        .into_iter()
+        .filter(|id| !data.profiles.iter().any(|p| p.id == *id))
         .collect()
 }
 
@@ -559,22 +595,20 @@ mod tests {
         // 每 5 秒轮询都会调这个入口：内容没变时绝不能写盘。
         let mut data = data_with(&["a", "b"], "a", "");
         data.running_mcp_workspace_ids = vec!["a".into()];
-        let mut wrote = false;
-        let changed = write_running_ids_with_rollback(&mut data, &["a".into()], |_| {
-            wrote = true;
-            Ok(())
-        })
-        .expect("ok");
-        assert!(!changed, "内容未变不应报告已写入");
-        assert!(!wrote, "内容未变绝不能落盘");
+        assert!(
+            pending_running_ids(&data, &["a".into()]).is_none(),
+            "内容未变必须返回 None，不得落盘"
+        );
+        // 仅顺序/空白不同也算未变（归一化后相等）。
+        assert!(pending_running_ids(&data, &[" a ".into()]).is_none());
     }
 
     #[test]
     fn running_ids_write_persists_change() {
         let mut data = data_with(&["a", "b"], "a", "");
-        let changed = write_running_ids_with_rollback(&mut data, &["a".into(), "b".into()], |_| Ok(()))
-            .expect("ok");
-        assert!(changed);
+        let next = pending_running_ids(&data, &["a".into(), "b".into()]).expect("有变化");
+        assert_eq!(next, vec!["a".to_string(), "b".to_string()]);
+        persist_running_ids_with_rollback(&mut data, next, |_| Ok(())).expect("ok");
         assert_eq!(data.running_mcp_workspace_ids, vec!["a".to_string(), "b".to_string()]);
     }
 
@@ -583,7 +617,7 @@ mod tests {
         // 落盘失败后内存不得留下一个没写进磁盘的值。
         let mut data = data_with(&["a", "b"], "a", "");
         data.running_mcp_workspace_ids = vec!["a".into()];
-        write_running_ids_with_rollback(&mut data, &["b".into()], |_| {
+        persist_running_ids_with_rollback(&mut data, vec!["b".into()], |_| {
             Err(AppError::Message("boom".into()))
         })
         .expect_err("must fail");
@@ -599,8 +633,8 @@ mod tests {
         // 全部停止时必须能把空集合写回去，否则会一直恢复上次的服务。
         let mut data = data_with(&["a"], "a", "");
         data.running_mcp_workspace_ids = vec!["a".into()];
-        let changed = write_running_ids_with_rollback(&mut data, &[], |_| Ok(())).expect("ok");
-        assert!(changed);
+        let next = pending_running_ids(&data, &[]).expect("清空属于变化");
+        persist_running_ids_with_rollback(&mut data, next, |_| Ok(())).expect("ok");
         assert!(data.running_mcp_workspace_ids.is_empty());
     }
 
@@ -615,5 +649,16 @@ mod tests {
         let mut gone = data_with(&["a", "b"], "a", "");
         gone.running_mcp_workspace_ids = vec!["deleted".into()];
         assert!(restorable_ids_of(&gone).is_empty(), "不得回退启动其它工作区");
+    }
+
+    #[test]
+    fn missing_ids_are_reported_not_silently_dropped() {
+        // 失效目标必须能被单独取出来，供恢复流程显式报告，而不是静默丢弃。
+        let mut data = data_with(&["a", "b"], "a", "");
+        data.running_mcp_workspace_ids = vec!["a".into(), "ghost".into()];
+        assert_eq!(missing_running_ids_of(&data), vec!["ghost".to_string()]);
+        // 无失效项时为空。
+        let ok = data_with(&["a"], "a", "");
+        assert!(missing_running_ids_of(&ok).is_empty());
     }
 }

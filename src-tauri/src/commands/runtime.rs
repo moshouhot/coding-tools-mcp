@@ -224,9 +224,26 @@ pub(crate) async fn restart_mcp_by_id(
         Ok(runtime.is_running(id, ServiceKind::Mcp))
     })?;
     if was_running {
-        let _ = stop_mcp_service(state, id).await?;
+        // 内部停止只是重启的中间态：全程暂停记录，避免把「临时为空」落盘。
+        // 若恰在此窗口崩溃，磁盘上仍是「运行中」，下次会重试启动——比丢掉恢复更合理。
+        crate::tray::suppress_recording(true);
     }
-    start_mcp_service(state, id).await
+
+    let result = async {
+        if was_running {
+            stop_mcp_service(state, id).await?;
+        }
+        start_mcp_service(state, id).await
+    }
+    .await;
+
+    if was_running {
+        // 先解除暂停再记录，否则 record 会因暂停而跳过。
+        crate::tray::suppress_recording(false);
+    }
+    // 转换完成立即记录，不等下一轮轮询。
+    crate::tray::record_current_state_async().await;
+    result
 }
 
 /// Async stop→start for Actions. Used by the Tauri command and secret-change hooks.
@@ -248,17 +265,24 @@ pub(crate) async fn start_mcp_by_id(
     state: &AppState,
     id: &str,
 ) -> AppResult<RuntimeStatusDto> {
-    start_mcp_service(state, id).await
+    let result = start_mcp_service(state, id).await;
+    // 转换完成立即记录，不等下一轮轮询（否则这 5 秒内退出会留下陈旧记录）。
+    crate::tray::record_current_state_async().await;
+    result
 }
 
 #[tauri::command]
 pub async fn start_runtime(state: State<'_, AppState>, id: String) -> AppResult<RuntimeStatusDto> {
-    start_mcp_service(&state, &id).await
+    let result = start_mcp_service(&state, &id).await;
+    crate::tray::record_current_state_async().await;
+    result
 }
 
 #[tauri::command]
 pub async fn stop_runtime(state: State<'_, AppState>, id: String) -> AppResult<RuntimeStatusDto> {
-    stop_mcp_service(&state, &id).await
+    let result = stop_mcp_service(&state, &id).await;
+    crate::tray::record_current_state_async().await;
+    result
 }
 
 #[tauri::command]
