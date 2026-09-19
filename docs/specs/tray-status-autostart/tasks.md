@@ -12,7 +12,7 @@
 
 ## 概述
 
-实现托盘状态图标（灰/绿/黄）与「开机自启并启动 MCP/隧道」勾选项，绑定工作区、复用既有隧道联动。
+实现托盘两态图标（运行中=原图标，未运行=灰度）与「开机自启并启动 MCP/隧道」勾选项，绑定工作区、复用既有隧道联动。
 
 > **二元禁令（零容忍）**：禁止出现未替换占位符、`TODO`、省略实现。
 
@@ -37,19 +37,19 @@
 
 ## 任务分解
 
-### T1 状态图标生成 `tray/icon.rs`
+### T1 两态图标 `tray/icon.rs`
 
-- [x] 内嵌 `icons/128x128.png` 并解码
-- [x] 蓝色字形蒙版（排除底板/圆角）
-- [x] 4×4 降采样到 32×32，三档缓存
-- [x] 单测：蒙版非平凡且居中、四角透明、三档颜色互异、尺寸正确
+- [x] 运行中：复用 `app.default_window_icon()`，保持原作者图标样式
+- [x] 未运行：同一源图转灰度（Rec.601 亮度，alpha 不变），只计算一次并缓存
+- [x] 拿不到默认图标时回退到编译期内嵌 `icons/128x128.png`
+- [x] 单测：灰度保留 alpha 且输出确为灰度、亮度单调、回退图尺寸与可见性、两态尺寸一致
 
 ### T2 状态聚合 `tray/state.rs`
 
 - [x] `ServiceSample` / `WorkspaceSample` / `TrayState`
-- [x] `classify()`：Healthy + 隧道未连 → Degraded
-- [x] `aggregate()`：黄 > 绿 > 灰；summary 与多行 tooltip
-- [x] 单测：全停/无工作区/无隧道运行/隧道健康/隧道断开/启动中/多工作区混合/降级优先
+- [x] `classify()`：Healthy + 隧道未连 → TunnelOffline
+- [x] `aggregate()`：有 MCP 监听 → 运行中；否则未运行；summary 与多行 tooltip
+- [x] 单测：全停/无工作区/无隧道运行/隧道健康/隧道断开/启动中/多工作区混合/MCP 错误
 
 ### T3 开机自启 `tray/autostart.rs`
 
@@ -66,7 +66,7 @@
 - [x] 5 秒串行轮询，首次立即采样，仅变化时更新图标
 - [x] 采样 MCP 实际阶段 + 隧道实际会话状态
 - [x] 自启开关：绑定校验、失败回滚、勾选以读回为准
-- [x] 自启启动路径：隐藏窗口 + 启动绑定工作区 MCP + 提示
+- [x] 自启启动路径：隐藏窗口 + 启动绑定工作区 MCP + 失败弹系统对话框
 
 ### T5 接线与持久化
 
@@ -78,14 +78,14 @@
 
 ### T6 验证
 
-- [x] `cargo test --lib tray::`（30 项全通过）
+- [x] `cargo test --lib tray::`（32 项全通过）
 - [x] `cargo test --lib data::store::`（8 项，含目标删除不回退、落盘失败回滚）
-- [x] `cargo test --lib`（本机 208 passed / 1 failed；失败项为既有环境相关，见下）
-- [x] `cargo clippy --all-targets`（`src/tray/`、`src/data/store.rs` 零警告）
+- [x] `cargo test --lib`（本机 211 passed / 0 failed）
+- [x] `cargo clippy --lib`（`src/tray/` 零警告；其余警告均为既有）
 - [x] `npm run check`（仅 1 项既有失败，见下）
 - [x] `npm run tauri -- build --bundles nsis`（产出安装包）
 - [x] 产物内嵌字符串核验（中文文案、`--autostart`、Run 键路径）
-- [ ] 真实托盘交互（颜色切换 / 右键菜单 / 自启项）——**待安装后人工验证**
+- [ ] 真实托盘交互（图标切换 / 右键菜单 / 自启项）——**待安装后人工验证**
 
 ---
 
@@ -93,10 +93,10 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| `cargo test --lib tray::` | 30 passed / 0 failed |
+| `cargo test --lib tray::` | 32 passed / 0 failed |
 | `cargo test --lib data::store::` | 8 passed / 0 failed（含「目标删除不回退」回归） |
-| `cargo test --lib`（全量） | 208 passed / 1 failed（失败项与本次改动无关，见下） |
-| `cargo clippy --all-targets` | `src/tray/` 与 `src/data/store.rs` 0 警告；其余警告均为既有 |
+| `cargo test --lib`（全量） | 211 passed / 0 failed |
+| `cargo clippy --lib` | `src/tray/` 0 警告；其余警告均为既有 |
 | `npm run check` | 1 error：`vite.config.js` 的 `@ts-expect-error`（**既有失败**） |
 | `npm run tauri -- build --bundles nsis` | 成功（退出码 0），产出 `Coding Tools MCP_0.2.3_x64-setup.exe` |
 
@@ -119,24 +119,25 @@
 | 回滚本身失败 | 错误信息含「回滚不完整」，不假装已恢复 |
 | 读不到旧绑定 | 直接取消开启，不写注册表 |
 | `read_run` 缺失 vs 失败 | `Ok(None)` 与 `Err` 可区分 |
-| MCP 错误 | 不计入运行数，summary 为「MCP 启动失败」，不误报为隧道问题 |
-| 隧道已配置但离线 | summary 为「隧道未连接」，仍计入运行数 |
+| MCP 错误 | 不计入运行数，summary 为「MCP 启动失败」，不误报为隧道问题；图标仍为灰度 |
+| 隧道已配置但离线 | summary 为「隧道未连接」，仍计入运行数，图标为原图标 |
+| 启动中（尚未监听） | 图标为灰度（未运行），文字显示「启动中」 |
 | 含空格/中文/超长路径 | 自启命令引号包裹且引号成对 |
 
 ### 既有失败（与本次改动无关，已在干净 HEAD 上复现）
 
 1. `npm run check` —— `vite.config.js:5` 的 `@ts-expect-error` 在本机 TypeScript 版本下被判定为多余。
 
-2. `tools::exec::tests::windows_workspace_scripts_and_python_unicode_execute_successfully`
-   —— 本机**稳定失败**（连续 4 次重跑均失败），且在**干净 HEAD**（172 项、不含本次任何测试）上同样失败。
+2. `cargo clippy` —— 干净 HEAD 上即存在 13 项警告（`port.rs`、`supervisor.rs`、`ui_memory.rs`、
+   `upstream.rs`、`process.rs`、`file.rs`、`cloudflare.rs`、`workspace/model.rs`），
+   **均不在本次改动文件中**；CI 不跑 clippy。
 
-   原因：该测试连续 10 次执行 `python -m workflow_probe`，并断言每次
-   `command_ok == true`。本机 Python 冷启动超过 harness 的快速返回阈值，
-   首次调用返回 `status: "running"` / `command_ok: null`，断言随即失败。
-   属于**本机环境时序**问题，与托盘改动无关；CI 上未复现。
-
-   > 因此本次交付的全量测试结果为 **208 passed / 1 failed**，其中 1 项失败为既有问题。
-   > 与本次改动直接相关的 `tray::`（30 项）与 `data::store::`（8 项）全部通过。
+> 本次交付的全量测试结果为 **211 passed / 0 failed**。
+> 与本次改动直接相关的 `tray::`（32 项）与 `data::store::`（8 项）全部通过。
+>
+> 早期记录曾提到 `tools::exec::tests::windows_workspace_scripts_and_python_unicode_execute_successfully`
+> 在本机稳定失败；本次复测已连续 4 次通过，疑与 Python 冷启动时序相关，
+> 此处不再列为失败项。
 
 ### 本机安装验证（2026-09-19）
 
@@ -144,7 +145,7 @@
 
 - 安装包 `Coding Tools MCP_0.2.3_x64-setup.exe`（静默安装退出码 0）。
 - 安装后的 `coding-tools-mcp-desktop.exe` 中可检出本次新增字符串
-  （`--autostart`、`tray-status`、`tray-notice`、`开机自启并启动 MCP/隧道`、`CodingToolsMcpDesktop`），
+  （`--autostart`、`tray-status`、`开机自启并启动 MCP/隧道`、`CodingToolsMcpDesktop`），
   确认安装的是定制构建而非官方原版。
 - 应用启动正常，且拥有窗口类为 `tray_icon_app` 的窗口 —— 该窗口类仅在**托盘图标已注册**时出现，
   即托盘图标确实生效。
@@ -153,6 +154,8 @@
 
 ### 尚未验证（需人工确认）
 
-- 托盘图标的**颜色切换**（需要实际启动/停止 MCP 才能观察到灰→绿→黄）。
+- 托盘图标的**两态切换**（需要实际启动/停止 MCP 才能观察到未运行→运行中）。
 - 右键菜单的**勾选交互**与 `--autostart` 的登录启动效果。
-- 开启真实开机自启会写入注册表并影响下次登录，**须由使用者单独确认后**才执行。
+
+> 安装验证当时记录「Run 键为空」，但后续检查发现 Run 值**确实被写入过**，
+> 工作区也已绑定。已将其移除，恢复为未启用；真实开机自启需使用者明确确认后再开启。

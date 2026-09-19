@@ -1,7 +1,7 @@
 //! 系统托盘：状态图标、状态菜单行，以及“开机自启并启动 MCP/隧道”。
 //!
-//! 图标颜色由 [`state`] 聚合出的实际状态决定；状态行文字与 tooltip 同时给出
-//! MCP 与隧道信息，避免只靠颜色传达状态。
+//! 图标只有两态：有 MCP 在监听时用原图标，否则用灰度图标；状态行文字与
+//! tooltip 给出 MCP 与隧道细节，避免只靠颜色传达状态。失败通过系统对话框提示。
 
 pub mod autostart;
 pub mod icon;
@@ -14,6 +14,7 @@ use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Wry};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 use crate::app_state::AppState;
 use crate::tunnel::TunnelServiceKind;
@@ -26,7 +27,6 @@ use state::{ServiceSample, TrayState, WorkspaceSample};
 pub const TRAY_ID: &str = "main-tray";
 
 const ID_STATUS: &str = "tray-status";
-const ID_NOTICE: &str = "tray-notice";
 const ID_SHOW: &str = "tray-show";
 const ID_AUTOSTART: &str = "tray-autostart";
 const ID_QUIT: &str = "tray-quit";
@@ -36,7 +36,6 @@ const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// 菜单句柄，用于原地更新文字与勾选状态，避免每 5 秒重建整个菜单。
 static STATUS_ITEM: OnceLock<MenuItem<Wry>> = OnceLock::new();
-static NOTICE_ITEM: OnceLock<MenuItem<Wry>> = OnceLock::new();
 static AUTOSTART_ITEM: OnceLock<CheckMenuItem<Wry>> = OnceLock::new();
 
 /// 最近一次聚合结果，用于避免无变化时重复设置图标。
@@ -45,20 +44,16 @@ static LAST_STATE: Mutex<Option<TrayState>> = Mutex::new(None);
 /// 构建托盘菜单并挂载事件。
 pub fn setup(app: &tauri::App) -> tauri::Result<()> {
     let status = MenuItem::with_id(app, ID_STATUS, "状态：采样中…", false, None::<&str>)?;
-    // 专用于展示失败/提示的只读行；无提示时文字为空，不干扰状态行。
-    let notice = MenuItem::with_id(app, ID_NOTICE, "", false, None::<&str>)?;
     let show = MenuItem::with_id(app, ID_SHOW, "显示窗口", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, ID_QUIT, "退出", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
 
     let _ = STATUS_ITEM.set(status.clone());
-    let _ = NOTICE_ITEM.set(notice.clone());
 
     // 非 Windows 平台没有 HKCU Run，自启无法生效；此时不展示该菜单项，
     // 避免给用户一个必然失败的操作。
-    let mut items: Vec<&dyn tauri::menu::IsMenuItem<Wry>> =
-        vec![&status, &notice, &separator, &show];
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = vec![&status, &separator, &show];
     if autostart::is_supported() {
         let autostart_item = CheckMenuItem::with_id(
             app,
@@ -84,11 +79,9 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
         .tooltip("Coding Tools MCP")
         // 右键菜单，左键显示窗口。
         .show_menu_on_left_click(false)
-        .icon(icon::image_for(Level::Stopped))
+        .icon(icon::image_for(app.handle(), Level::Stopped))
         .on_menu_event(|app, event| match event.id.as_ref() {
             ID_SHOW => {
-                // 用户已看到窗口，清除陈旧提示。
-                clear_notice();
                 let _ = crate::commands::window_chrome::show_main_window(app.clone());
             }
             ID_AUTOSTART => on_toggle_autostart(app),
@@ -212,7 +205,7 @@ fn apply(app: &AppHandle, sampled: &TrayState) {
         // 只在档位变化时替换图标，避免每 5 秒无谓重绘与托盘闪烁。
         let level_changed = previous.as_ref().map(|p| p.level) != Some(sampled.level);
         if level_changed {
-            let _ = tray.set_icon(Some(icon::image_for(sampled.level)));
+            let _ = tray.set_icon(Some(icon::image_for(app, sampled.level)));
         }
         // tooltip 仅在实际内容变化时更新。
         if previous.as_ref().map(|p| p.tooltip.as_str()) != Some(sampled.tooltip.as_str()) {
@@ -267,13 +260,13 @@ fn on_toggle_autostart(app: &AppHandle) {
     if currently.is_enabled() {
         // 关闭只取消自启与绑定，不停止当前正在运行的服务。
         match autostart::disable(&ops) {
-            Ok(()) => notify(app, "已关闭开机自启"),
-            Err(error) => notify(app, &format!("关闭开机自启失败：{error}")),
+            Ok(()) => report_ok("已关闭开机自启"),
+            Err(error) => report_failure(app, &format!("关闭开机自启失败：{error}")),
         }
     } else {
         // 无法判定注册表状态时不冒险修改。
         if let autostart::RunState::Unknown(reason) = currently {
-            notify(app, &format!("无法读取开机自启状态，已取消操作：{reason}"));
+            report_failure(app, &format!("无法读取开机自启状态，已取消操作：{reason}"));
             sync_autostart_item(app);
             return;
         }
@@ -283,7 +276,7 @@ fn on_toggle_autostart(app: &AppHandle) {
             .with_workspaces(|store| Ok(store.selected_workspace_id()))
             .unwrap_or_default();
         if selected.trim().is_empty() {
-            notify(app, "请先在界面中打开一个工作区，再开启开机自启");
+            report_failure(app, "请先在界面中打开一个工作区，再开启开机自启");
             sync_autostart_item(app);
             return;
         }
@@ -294,8 +287,8 @@ fn on_toggle_autostart(app: &AppHandle) {
             .unwrap_or_else(|| selected.clone());
 
         match autostart::enable(&ops, &selected) {
-            Ok(()) => notify(app, &format!("已开启开机自启，将启动「{name}」的 MCP")),
-            Err(error) => notify(app, &format!("开启开机自启失败：{error}")),
+            Ok(()) => report_ok(&format!("已开启开机自启，将启动「{name}」的 MCP")),
+            Err(error) => report_failure(app, &format!("开启开机自启失败：{error}")),
         }
     }
 
@@ -340,25 +333,24 @@ impl autostart::AutostartOps for LiveOps<'_> {
     }
 }
 
-/// 提示用户。
+/// 报告失败：写日志并弹一个系统对话框。
 ///
-/// tooltip 会被下一轮刷新覆盖，release 下 stderr 也不可见，因此写进一个**专用只读
-/// 菜单行**：它不被状态轮询覆盖，用户右键就能看到失败原因。
-fn notify(app: &AppHandle, message: &str) {
-    if let Some(item) = NOTICE_ITEM.get() {
-        let _ = item.set_text(format!("提示：{message}"));
-    }
-    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_tooltip(Some(format!("Coding Tools MCP · {message}")));
-    }
+/// 托盘菜单里不再有「提示」行，tooltip 又会被下一轮 5 秒刷新覆盖，
+/// release 下 stderr 也不可见，因此失败必须走用户确实能看到的出口。
+fn report_failure(app: &AppHandle, message: &str) {
     eprintln!("[tray] {message}");
+    app.dialog()
+        .message(message)
+        .title("Coding Tools MCP")
+        .kind(MessageDialogKind::Error)
+        .show(|_| {});
 }
 
-/// 用户确认后清除提示行。
-pub fn clear_notice() {
-    if let Some(item) = NOTICE_ITEM.get() {
-        let _ = item.set_text("");
-    }
+/// 报告成功：只记日志。
+///
+/// 成功不需要打断用户：菜单勾选、状态行与图标已经反映了结果。
+fn report_ok(message: &str) {
+    eprintln!("[tray] {message}");
 }
 
 /// 登录自启路径：后台启动绑定工作区的 MCP（并复用隧道联动）。
@@ -381,12 +373,15 @@ pub async fn run_autostart_startup(app: AppHandle) {
             (id, name)
         }
         crate::data::AutostartTarget::Unbound => {
-            notify(&app, "开机自启未绑定工作区，已跳过启动");
+            report_failure(&app, "开机自启未绑定工作区，已跳过启动");
             refresh(&app).await;
             return;
         }
         crate::data::AutostartTarget::Missing(_) => {
-            notify(&app, "开机自启绑定的工作区已不存在，已跳过启动（未启动其它工作区）");
+            report_failure(
+                &app,
+                "开机自启绑定的工作区已不存在，已跳过启动（未启动其它工作区）",
+            );
             refresh(&app).await;
             return;
         }
@@ -397,19 +392,19 @@ pub async fn run_autostart_startup(app: AppHandle) {
             // 启动成功不等于隧道已连：隧道错误在 start_mcp_service 中被吞掉，
             // 因此必须回查实际监督状态，避免把失败报成全部成功。
             match tunnel_online(&state, &id).await {
-                Some(true) => notify(&app, &format!("开机自启已启动「{name}」的 MCP 与隧道")),
-                Some(false) => notify(
+                Some(true) => report_ok(&format!("开机自启已启动「{name}」的 MCP 与隧道")),
+                Some(false) => report_failure(
                     &app,
                     &format!("「{name}」的 MCP 已启动，但隧道未能连接（已配置但未在线）"),
                 ),
-                None => notify(&app, &format!("「{name}」的 MCP 已启动（未配置隧道）")),
+                None => report_ok(&format!("「{name}」的 MCP 已启动（未配置隧道）")),
             }
         }
-        Ok(status) => notify(
+        Ok(status) => report_failure(
             &app,
             &format!("开机自启启动「{name}」的 MCP 未成功：{}", status.local_message),
         ),
-        Err(error) => notify(&app, &format!("开机自启启动「{name}」的 MCP 失败：{error}")),
+        Err(error) => report_failure(&app, &format!("开机自启启动「{name}」的 MCP 失败：{error}")),
     }
     refresh(&app).await;
 }
@@ -433,6 +428,6 @@ async fn tunnel_online(state: &AppState, id: &str) -> Option<bool> {
 
 /// 便于测试与复用的图标构造。
 #[allow(dead_code)]
-pub fn icon_image(level: Level) -> Image<'static> {
-    icon::image_for(level)
+pub fn icon_image(app: &AppHandle, level: Level) -> Image<'static> {
+    icon::image_for(app, level)
 }

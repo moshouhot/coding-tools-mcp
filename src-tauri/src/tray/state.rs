@@ -2,7 +2,9 @@
 //!
 //! 采样必须反映**实际**监督状态：运行中要看 MCP 监听器是否真的在跑，
 //! 隧道是否在线要看隧道监督器里对应会话/进程是否存活，而不是只看保存过的公网 URL。
-//! 聚合结果只有三档，颜色之外还有文字说明，避免只靠颜色传达状态。
+//!
+//! 图标只有两态（运行中=原图标，未运行=灰色）；启动中、隧道未连、MCP 错误
+//! 这些细节不改变图标，而是通过 tooltip 与状态菜单行的文字表达，避免只靠颜色传达状态。
 
 use crate::settings::AppSettings;
 use crate::workspace::WorkspaceProfile;
@@ -70,9 +72,12 @@ pub fn classify(sample: &WorkspaceSample) -> ServiceSample {
 
 /// 聚合多个工作区采样为托盘总状态。
 ///
-/// - 全部停止 → 灰色
-/// - 存在启动中/停止中、MCP 错误，或「运行中但隧道未连」 → 黄色
-/// - 至少一个运行且全部健康 → 绿色
+/// 图标只有两态：
+///
+/// - 至少一个工作区的 MCP **确实在监听** → [`Level::Running`]（原图标）
+/// - 其余情况（全部停止、仅启动中、MCP 错误）→ [`Level::Stopped`]（灰色）
+///
+/// 启动中 / 隧道未连 / MCP 错误不改变图标，只体现在 summary 与 tooltip 文字里。
 pub fn aggregate(samples: Vec<WorkspaceSample>) -> TrayState {
     let classified: Vec<ServiceSample> = samples.iter().map(classify).collect();
 
@@ -91,10 +96,9 @@ pub fn aggregate(samples: Vec<WorkspaceSample>) -> TrayState {
         .iter()
         .any(|s| matches!(s, ServiceSample::McpError));
 
-    let level = if any_transitioning || any_tunnel_offline || any_mcp_error {
-        Level::Warn
-    } else if any_running {
-        Level::Ok
+    // 图标只看「有没有 MCP 真的在监听」；其余细节交给文字。
+    let level = if any_running {
+        Level::Running
     } else {
         Level::Stopped
     };
@@ -193,6 +197,15 @@ mod tests {
     }
 
     #[test]
+    fn starting_still_shows_stopped_icon() {
+        // 启动中尚未监听端口，图标仍是「未运行」；细节由文字表达。
+        let state = aggregate(vec![sample(ServiceSample::Transitioning, true, false)]);
+        assert_eq!(state.level, Level::Stopped);
+        assert!(!state.any_running);
+        assert!(state.summary.contains("启动中"));
+    }
+
+    #[test]
     fn no_workspaces_is_gray_and_explained() {
         let state = aggregate(vec![]);
         assert_eq!(state.level, Level::Stopped);
@@ -201,31 +214,32 @@ mod tests {
     }
 
     #[test]
-    fn running_without_tunnel_is_green() {
+    fn running_without_tunnel_shows_running_icon() {
         let state = aggregate(vec![sample(ServiceSample::Healthy, false, false)]);
-        assert_eq!(state.level, Level::Ok);
+        assert_eq!(state.level, Level::Running);
         assert!(state.any_running);
     }
 
     #[test]
-    fn running_with_healthy_tunnel_is_green() {
+    fn running_with_healthy_tunnel_shows_running_icon() {
         let state = aggregate(vec![sample(ServiceSample::Healthy, true, true)]);
-        assert_eq!(state.level, Level::Ok);
+        assert_eq!(state.level, Level::Running);
     }
 
     #[test]
-    fn running_with_dead_tunnel_is_yellow() {
+    fn running_with_dead_tunnel_still_shows_running_icon() {
+        // MCP 确实在监听 → 原图标；隧道未连只体现在文字上。
         let state = aggregate(vec![sample(ServiceSample::Healthy, true, false)]);
-        assert_eq!(state.level, Level::Warn);
+        assert_eq!(state.level, Level::Running);
         assert!(state.any_running, "MCP 仍在运行，只是隧道未连");
         assert!(state.summary.contains("隧道未连接"));
     }
 
     #[test]
-    fn mcp_error_is_yellow_and_not_counted_as_running() {
+    fn mcp_error_is_gray_and_not_counted_as_running() {
         // MCP 启动失败绝不能报成「运行中」，也不能描述为隧道问题。
         let state = aggregate(vec![sample(ServiceSample::McpError, true, false)]);
-        assert_eq!(state.level, Level::Warn);
+        assert_eq!(state.level, Level::Stopped);
         assert!(!state.any_running, "MCP 错误不能算作运行中");
         assert!(state.summary.contains("MCP 启动失败"), "{}", state.summary);
         assert!(!state.summary.contains("隧道未连接"));
@@ -238,39 +252,40 @@ mod tests {
             sample(ServiceSample::McpError, true, false),
             sample(ServiceSample::Healthy, true, false),
         ]);
-        assert_eq!(state.level, Level::Warn);
+        // 有一个真的在监听，所以图标是运行中；文字优先报告错误。
+        assert_eq!(state.level, Level::Running);
         assert!(state.summary.contains("MCP 启动失败"));
         assert!(state.summary.contains("1/2"), "{}", state.summary);
     }
 
     #[test]
-    fn starting_is_yellow_even_when_others_run() {
+    fn starting_alongside_running_shows_running_icon() {
         let state = aggregate(vec![
             sample(ServiceSample::Healthy, true, true),
             sample(ServiceSample::Transitioning, true, false),
         ]);
-        assert_eq!(state.level, Level::Warn);
+        assert_eq!(state.level, Level::Running);
         assert!(state.summary.contains("启动中"));
     }
 
     #[test]
-    fn one_green_one_gray_is_still_green() {
-        // 多工作区场景：只要有一个健康运行，总状态就是绿色。
+    fn one_running_one_stopped_shows_running_icon() {
+        // 多工作区场景：只要有一个在运行，总状态就是运行中。
         let state = aggregate(vec![
             sample(ServiceSample::Healthy, true, true),
             sample(ServiceSample::Stopped, true, false),
         ]);
-        assert_eq!(state.level, Level::Ok);
+        assert_eq!(state.level, Level::Running);
         assert!(state.summary.contains("1/2"));
     }
 
     #[test]
-    fn degraded_beats_healthy_for_level_but_reports_running() {
+    fn degraded_and_healthy_both_count_as_running() {
         let state = aggregate(vec![
             sample(ServiceSample::Healthy, true, true),
             sample(ServiceSample::Healthy, true, false),
         ]);
-        assert_eq!(state.level, Level::Warn);
+        assert_eq!(state.level, Level::Running);
         assert_eq!(
             state
                 .workspaces

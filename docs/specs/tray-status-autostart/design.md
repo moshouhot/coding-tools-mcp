@@ -17,9 +17,9 @@
 | 文件 | 职责 |
 | --- | --- |
 | `tray/mod.rs` | 托盘构建、菜单事件、5 秒轮询、状态应用、自启开关与自启启动路径 |
-| `tray/icon.rs` | 由应用图标生成灰/绿/黄三个状态图标（解码 + 重新着色 + 降采样 + 缓存） |
+| `tray/icon.rs` | 两态图标：运行中用原图标原样，未运行用同一图标的灰度版 |
 | `tray/autostart.rs` | HKCU Run 读写、命令构造、`--autostart` 参数识别、可替换后端（便于测试） |
-| `tray/state.rs` | 采样模型与聚合：单工作区 → 三档总状态 + tooltip + summary |
+| `tray/state.rs` | 采样模型与聚合：单工作区 → 两态总状态 + tooltip + summary |
 
 `lib.rs` 只保留 `setup_tray` 薄封装，并在 `setup` 中启动轮询、按 `--autostart` 触发自启启动。
 
@@ -34,11 +34,13 @@ WorkspaceSample { name, mcp, tunnel_configured, tunnel_online }
 aggregate(Vec<WorkspaceSample>) → TrayState { level, tooltip, summary, any_running, workspaces }
 ```
 
-档位判定（优先级从高到低）：
+档位判定（图标只有两态）：
 
-1. 存在 `Transitioning`（启动/停止中）、`McpError`（MCP 启动失败）或 `TunnelOffline`（隧道未连） → **黄**
-2. 否则存在 `Healthy`（运行且隧道健康，或未配置隧道） → **绿**
-3. 否则 → **灰**
+1. 存在 `Healthy`（MCP 确实在监听；隧道健康与否不影响图标） → **运行中**（原图标）
+2. 否则 → **未运行**（灰度）
+
+`Transitioning`（启动/停止中）、`TunnelOffline`（隧道未连）、`McpError`（MCP 启动失败）
+**都不改变图标**，只体现在 summary 与 tooltip 文字里。
 
 **MCP 错误 ≠ 隧道离线**：`McpError` 不计入运行数，summary 显示「MCP 启动失败」，
 不会错报成「运行中 · 隧道未连接」。
@@ -48,17 +50,20 @@ aggregate(Vec<WorkspaceSample>) → TrayState { level, tooltip, summary, any_run
 - **MCP 阶段**：`RuntimeSupervisor::refresh_mcp()` + `mcp_status()`。`refresh` 会实际校验监听端口是否存活，避免只信内存 phase。
 - **隧道状态**：`TunnelSupervisor::status(profile, Mcp, &settings).state == "running"`，该实现会检查 frpc 进程存活与 session 是否存在。**不读取保存过的公网 URL**。
 
-> 范围声明：绿色只表示**本机** MCP 监听与隧道监督状态正常，
-> 不代表公网端到端可达（这需要外部探测，本次不做）。
+> 范围声明：运行中图标只表示**本机** MCP 监听已建立，
+> 不代表隧道公网端到端可达（这需要外部探测，本次不做）。
 
 ## 图标生成
 
-`include_bytes!` 内嵌 `icons/128x128.png`（开发态与安装后路径一致）：
+图标只有两态，且**不做重新着色**：
 
-1. 解码 RGBA，按「饱和蓝色字形」规则生成 alpha 蒙版：
-   `b - r > 60 && b - g > 40 && r < 190`，排除近白底板与浅蓝圆角。
-2. 4×4 盒式平均降采样到 32×32（Windows 托盘实际 16px，32px 留高 DPI 余量）。
-3. 用状态色填充蒙版，得到 RGBA；三个档位只计算一次并缓存 `Image::new_owned`。
+1. **运行中**：直接复用 Tauri 的默认窗口图标（`app.default_window_icon()`），
+   与原作者的托盘图标完全一致。
+2. **未运行**：取同一张源图，按 Rec.601 亮度加权转灰度（`alpha` 原样保留），
+   只计算一次并缓存。
+3. 若拿不到默认窗口图标，回退到编译期 `include_bytes!` 内嵌的 `icons/128x128.png`。
+
+因为只改颜色、不改形状，两种状态的轮廓完全一致，用户一眼能看出「同一个图标的亮/暗」。
 
 托盘图标通过 `TrayIcon::set_icon(Some(...))` 原地替换，不重建托盘。
 
@@ -115,8 +120,14 @@ aggregate(Vec<WorkspaceSample>) → TrayState { level, tooltip, summary, any_run
 
 ## 提示可见性
 
-`tooltip` 会被下一轮 5 秒刷新覆盖，release 下 stderr 也不可见。因此失败/提示写入一个
-**专用只读菜单行**（`tray-notice`），它不被状态轮询覆盖；用户点「显示窗口」后清除。
+`tooltip` 会被下一轮 5 秒刷新覆盖，release 下 stderr 也不可见。因此：
+
+- **失败**：弹一个系统错误对话框（`tauri-plugin-dialog`，`MessageDialogKind::Error`），
+  用户必定能看到；同时写 stderr 日志。
+- **成功**：只记日志。成功无需打断用户——菜单勾选、状态行与图标已反映结果。
+
+> 早期版本曾在菜单里加一行只读「提示」行，现已移除：它常驻在菜单里、
+> 且成功提示也会留下痕迹，反而干扰用户。
 
 ## 关键决策与取舍
 
@@ -125,6 +136,8 @@ aggregate(Vec<WorkspaceSample>) → TrayState { level, tooltip, summary, any_run
 | 用 `windows` crate 的 `Win32_System_Registry`，不引入 `winreg` | 项目已依赖 `windows`，只需加一个 feature，避免新增第三方依赖 |
 | 状态轮询 5 秒、串行、`AtomicBool` 防重入 | 与参考实现一致；避免重叠采样 |
 | 图标仅在**档位变化**时 `set_icon`，tooltip/summary 仅在内容变化时更新 | 避免每 5 秒无谓重绘与托盘闪烁 |
+| 图标只做两态，不做重新着色 | 运行中保持原作者图标样式，用户一眼可辨；不擅自改动品牌配色 |
+| 失败用系统对话框，而非菜单里的提示行 | 失败必须真的被看到；提示行常驻菜单反而干扰 |
 | 开启与启动用**两个不同**的目标解析函数 | 开启只用用户明确选中的工作区；登录启动严格用绑定项，否则会静默换目标 |
 | 非 Windows 不展示自启菜单项 | 不给用户一个必然失败的操作 |
 | 自启只启动 MCP，不启动 Actions | 用户诉求明确为 MCP/隧道；减少登录时的资源占用与端口冲突面 |
