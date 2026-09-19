@@ -16,6 +16,7 @@ mod runtime;
 mod secret;
 mod settings;
 pub mod tools;
+mod tray;
 mod tunnel;
 mod update;
 mod workspace;
@@ -37,8 +38,6 @@ use commands::{
     show_main_window, start_actions_runtime, start_runtime, start_tunnel, stop_actions_runtime,
     stop_runtime, stop_tunnel, test_tunnel, uninstall_software, update_workspace,
 };
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, WindowEvent};
 
 #[cfg(target_os = "windows")]
@@ -119,40 +118,7 @@ fn acquire_single_instance() -> bool {
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
-    let show_i = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
-    let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
-
-    let mut builder = TrayIconBuilder::with_id("main-tray")
-        .menu(&menu)
-        .tooltip("Coding Tools MCP")
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                let _ = commands::window_chrome::show_main_window(app.clone());
-            }
-            "quit" => {
-                commands::window_chrome::arm_allow_exit();
-                app.exit(0);
-            }
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let _ = commands::window_chrome::show_main_window(tray.app_handle().clone());
-            }
-        });
-
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
-    }
-
-    builder.build(app)?;
-    Ok(())
+    tray::setup(app)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -168,6 +134,18 @@ pub fn run() {
             // (common after install/restart network blips).
             tunnel::ensure_frp_health_loop();
             setup_tray(app)?;
+            // 托盘状态图标：立即采样一次，随后每 5 秒刷新。
+            tray::spawn_refresh_loop(app.handle().clone());
+            // 由登录自启拉起时：不弹窗口，只驻留托盘，并后台启动绑定工作区的 MCP。
+            if tray::autostart::is_autostart_invocation() {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tray::run_autostart_startup(handle).await;
+                });
+            }
             #[cfg(target_os = "windows")]
             {
                 let _ = SHOW_APP_HANDLE.set(app.handle().clone());

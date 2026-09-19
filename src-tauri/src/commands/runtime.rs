@@ -244,6 +244,13 @@ pub(crate) async fn restart_actions_by_id(
     start_actions_service(state, id).await
 }
 
+pub(crate) async fn start_mcp_by_id(
+    state: &AppState,
+    id: &str,
+) -> AppResult<RuntimeStatusDto> {
+    start_mcp_service(state, id).await
+}
+
 #[tauri::command]
 pub async fn start_runtime(state: State<'_, AppState>, id: String) -> AppResult<RuntimeStatusDto> {
     start_mcp_service(&state, &id).await

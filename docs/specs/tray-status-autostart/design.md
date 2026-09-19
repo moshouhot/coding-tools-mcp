@@ -1,0 +1,137 @@
+> **状态：本次交付方案。**
+>
+> 在官方主程序（`src-tauri/`）内实现托盘状态图标与「开机自启并启动 MCP/隧道」。
+> 选此方案的原因：托盘需要读取进程内 supervisor 的真实运行状态，
+> 并直接调用 `start_mcp_by_id`，进程内实现不需要任何外部控制接口或界面自动化。
+>
+> 官方安装的应用可照常升级；定制版由本地源码构建，仅用于验证。
+
+---
+
+# 设计文档：tray-status-autostart
+
+## 架构与模块划分
+
+新增 `src-tauri/src/tray/` 模块，把原 `lib.rs::setup_tray` 的托盘职责收拢进来：
+
+| 文件 | 职责 |
+| --- | --- |
+| `tray/mod.rs` | 托盘构建、菜单事件、5 秒轮询、状态应用、自启开关与自启启动路径 |
+| `tray/icon.rs` | 由应用图标生成灰/绿/黄三个状态图标（解码 + 重新着色 + 降采样 + 缓存） |
+| `tray/autostart.rs` | HKCU Run 读写、命令构造、`--autostart` 参数识别、可替换后端（便于测试） |
+| `tray/state.rs` | 采样模型与聚合：单工作区 → 三档总状态 + tooltip + summary |
+
+`lib.rs` 只保留 `setup_tray` 薄封装，并在 `setup` 中启动轮询、按 `--autostart` 触发自启启动。
+
+## 状态模型
+
+```text
+WorkspaceSample { name, mcp, tunnel_configured, tunnel_online }
+        │
+        ├─ classify(): Healthy + 配置了隧道但未连 → TunnelOffline
+        │               McpError 保持独立，不归为「运行中」
+        ▼
+aggregate(Vec<WorkspaceSample>) → TrayState { level, tooltip, summary, any_running, workspaces }
+```
+
+档位判定（优先级从高到低）：
+
+1. 存在 `Transitioning`（启动/停止中）、`McpError`（MCP 启动失败）或 `TunnelOffline`（隧道未连） → **黄**
+2. 否则存在 `Healthy`（运行且隧道健康，或未配置隧道） → **绿**
+3. 否则 → **灰**
+
+**MCP 错误 ≠ 隧道离线**：`McpError` 不计入运行数，summary 显示「MCP 启动失败」，
+不会错报成「运行中 · 隧道未连接」。
+
+采样来源：
+
+- **MCP 阶段**：`RuntimeSupervisor::refresh_mcp()` + `mcp_status()`。`refresh` 会实际校验监听端口是否存活，避免只信内存 phase。
+- **隧道状态**：`TunnelSupervisor::status(profile, Mcp, &settings).state == "running"`，该实现会检查 frpc 进程存活与 session 是否存在。**不读取保存过的公网 URL**。
+
+> 范围声明：绿色只表示**本机** MCP 监听与隧道监督状态正常，
+> 不代表公网端到端可达（这需要外部探测，本次不做）。
+
+## 图标生成
+
+`include_bytes!` 内嵌 `icons/128x128.png`（开发态与安装后路径一致）：
+
+1. 解码 RGBA，按「饱和蓝色字形」规则生成 alpha 蒙版：
+   `b - r > 60 && b - g > 40 && r < 190`，排除近白底板与浅蓝圆角。
+2. 4×4 盒式平均降采样到 32×32（Windows 托盘实际 16px，32px 留高 DPI 余量）。
+3. 用状态色填充蒙版，得到 RGBA；三个档位只计算一次并缓存 `Image::new_owned`。
+
+托盘图标通过 `TrayIcon::set_icon(Some(...))` 原地替换，不重建托盘。
+
+## 自启设计
+
+**命令**：`"<exe 绝对路径>" --autostart`（引号包裹，兼容含空格/中文路径）。
+**注册表**：`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，值名 `CodingToolsMcpDesktop`。
+**三态判定**（`RunState`）：
+
+| 状态 | 含义 |
+| --- | --- |
+| `Enabled` | 值存在且与本 exe 预期命令一致 |
+| `Disabled` | 确认未启用（值不存在，或存在但指向其它副本） |
+| `Unknown` | **读取失败**（权限/损坏） |
+
+> `Unknown` 绝不等于 `Disabled`。若把读取失败当成「未启用」，一次权限错误就会导致
+> 关闭流程错误地清空绑定。因此 `read_run_value()` 返回 `Result<Option<String>, String>`，
+> 只有「值不存在」是 `Ok(None)`。
+
+**可注入后端**：`AutostartOps` trait 抽象注册表与绑定的读写，生产用 `LiveOps`
+（真实注册表 + 数据存储），测试用内存 `FakeOps` 可注入写入失败、读回不生效、
+读取失败，从而验证真实回滚行为而非仅返回值。
+
+**开启流程**（`autostart::enable`，由 `on_toggle_autostart` 调用）：
+
+1. 读取当前 `RunState`。`Unknown`（读取失败）→ 直接取消操作，**不冒险修改**。
+2. `selected_workspace_id()` 取用户**明确选中**的工作区。**不回退到首个工作区**；
+   未选中 → 提示「请先在界面中打开一个工作区」，不写注册表。
+3. 记录旧注册表值与旧绑定 → 写注册表 → 保存绑定 → 读回校验。
+4. **任一步失败都回滚**到旧状态（恢复旧 Run 值与旧绑定）；回滚本身失败也会
+   在错误信息里明确报告，不静默。
+5. 只有写入、绑定、读回全部成功才算成功。
+
+**关闭流程**（`autostart::disable`）：
+
+1. 删除注册表项。
+2. **读回确认已不存在**（`Ok(None)`）；仍存在或读取失败 → 报错并**保留绑定**。
+3. 确认后才清除绑定。
+
+全程**不停止**任何正在运行的服务，也**不触碰其它应用**的 Run 项。
+
+**启动流程**（`--autostart`）：`setup` 中隐藏主窗口 → 后台 `run_autostart_startup()`：
+
+1. `autostart_launch_target()` 解析绑定目标。**此路径绝不回退**：
+   - `Unbound` → 提示未绑定并跳过；
+   - `Missing` → 提示绑定工作区已不存在并跳过，**明确不启动其它工作区**；
+   - `Bound` → 继续。
+2. `start_mcp_by_id()` 启动 MCP（复用既有隧道联动）。
+3. **回查隧道实际监督状态**再决定文案：
+   - 隧道在线 → 「已启动 MCP 与隧道」；
+   - 已配置但未在线 → 「MCP 已启动，但隧道未能连接」；
+   - 未配置隧道 → 「MCP 已启动（未配置隧道）」。
+   （`start_mcp_service` 会吞掉隧道启动错误，所以不能凭 MCP `running` 就宣布隧道成功。）
+
+## 提示可见性
+
+`tooltip` 会被下一轮 5 秒刷新覆盖，release 下 stderr 也不可见。因此失败/提示写入一个
+**专用只读菜单行**（`tray-notice`），它不被状态轮询覆盖；用户点「显示窗口」后清除。
+
+## 关键决策与取舍
+
+| 决策 | 原因 |
+| --- | --- |
+| 用 `windows` crate 的 `Win32_System_Registry`，不引入 `winreg` | 项目已依赖 `windows`，只需加一个 feature，避免新增第三方依赖 |
+| 状态轮询 5 秒、串行、`AtomicBool` 防重入 | 与参考实现一致；避免重叠采样 |
+| 图标仅在**档位变化**时 `set_icon`，tooltip/summary 仅在内容变化时更新 | 避免每 5 秒无谓重绘与托盘闪烁 |
+| 开启与启动用**两个不同**的目标解析函数 | 开启只用用户明确选中的工作区；登录启动严格用绑定项，否则会静默换目标 |
+| 非 Windows 不展示自启菜单项 | 不给用户一个必然失败的操作 |
+| 自启只启动 MCP，不启动 Actions | 用户诉求明确为 MCP/隧道；减少登录时的资源占用与端口冲突面 |
+| 绑定工作区 id 持久化在 `profiles.json` | 与既有配置同源，避免新增配置文件 |
+
+## 兼容性与风险
+
+- `autostart_workspace_id` 使用 `#[serde(default)]`，旧 `profiles.json` 可直接反序列化，无需迁移。
+- 非 Windows 平台：`autostart` 的 win 后端为桩实现（读 `None`、写 `false`），菜单项仍存在但不会真正生效；不影响 macOS 既有行为。
+- 端口被占用等启动失败由 `start_mcp_by_id` 既有错误路径返回，并通过托盘提示可见，不静默改启动其它工作区。

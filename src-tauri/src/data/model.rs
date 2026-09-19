@@ -12,6 +12,9 @@ pub struct AppData {
     pub frp_profiles: Vec<FrpProfile>,
     #[serde(default)]
     pub last_workspace_id: String,
+    /// 开机自启绑定并启动的工作区 id。空表示未绑定。
+    #[serde(default)]
+    pub autostart_workspace_id: String,
     #[serde(default)]
     pub download: DownloadConfig,
     #[serde(default)]

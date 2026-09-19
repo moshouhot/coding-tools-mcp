@@ -3,4 +3,4 @@ mod model;
 mod store;
 
 pub use model::AppData;
-pub use store::DataStore;
+pub use store::{AutostartTarget, DataStore};
