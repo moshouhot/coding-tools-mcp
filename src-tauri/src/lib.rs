@@ -138,10 +138,6 @@ pub fn run() {
             // 首轮采样早于服务真正拉起，否则会把「当前为空」写回磁盘，
             // 待恢复集合在恢复动作开始前就被抹掉。
             let is_autostart = tray::autostart::is_autostart_invocation();
-            // 启动动作（登录自启 / 普通启动恢复）期间暂停记录，且必须在轮询首帧之前生效：
-            // 首轮采样早于服务真正拉起，否则会把「当前为空」写回磁盘，
-            // 待恢复集合在恢复动作开始前就被抹掉。
-            //
             // 令牌交给后台任务持有：即使该任务被取消，Drop 仍会解除暂停。
             let suppress = tray::SuppressGuard::new();
             // 托盘状态图标：立即采样一次，随后每 5 秒刷新。
@@ -155,8 +151,6 @@ pub fn run() {
             }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // 令牌随本任务存活，直到启动动作结束后释放。
-                let _suppress = suppress;
                 match tray::startup_path(is_autostart) {
                     tray::StartupPath::Autostart => {
                         tray::run_autostart_startup(handle.clone()).await
@@ -166,7 +160,7 @@ pub fn run() {
                     }
                 }
                 // 释放暂停后立即重采样一次，让磁盘落到启动完成后的真实状态。
-                drop(_suppress);
+                drop(suppress);
                 tray::refresh(&handle).await;
             });
             #[cfg(target_os = "windows")]

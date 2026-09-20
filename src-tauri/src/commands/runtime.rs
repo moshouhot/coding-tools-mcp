@@ -229,7 +229,7 @@ pub(crate) async fn restart_mcp_by_id(
     //
     // 用作用域令牌而非手工配对：本函数在 await 处可能被取消，
     // 令牌的 Drop 仍会执行，不会漏掉恢复。
-    let _suppress = if was_running {
+    let suppress = if was_running {
         Some(crate::tray::SuppressGuard::new())
     } else {
         None
@@ -244,7 +244,7 @@ pub(crate) async fn restart_mcp_by_id(
     .await;
 
     // 先解除暂停再记录，否则 record 会因暂停而跳过。
-    drop(_suppress);
+    drop(suppress);
     // 转换完成立即记录，不等下一轮轮询。
     crate::tray::record_after_transition();
     result
