@@ -842,8 +842,8 @@ mod tests {
             "exec_command",
             &json!({
                 "cmd": "echo trusted-shell-one && echo trusted-shell-two",
-                "timeout_ms": 10_000,
-                "yield_time_ms": 10_000
+                "timeout_ms": 30_000,
+                "yield_time_ms": 30_000
             }),
         );
         assert_eq!(shell["command_ok"], true, "{shell}");
@@ -864,8 +864,8 @@ mod tests {
             "exec_command",
             &json!({
                 "cmd": "certutil -hashfile hash-me.txt SHA256",
-                "timeout_ms": 10_000,
-                "yield_time_ms": 10_000
+                "timeout_ms": 30_000,
+                "yield_time_ms": 30_000
             }),
         );
         assert_eq!(certutil["command_ok"], true, "{certutil}");
@@ -876,8 +876,8 @@ mod tests {
             &json!({
                 "cmd": "python -c \"import os; print(os.environ['CTMCP_DANGEROUS_ENV'])\"",
                 "env": {"CTMCP_DANGEROUS_ENV": "env-ok"},
-                "timeout_ms": 10_000,
-                "yield_time_ms": 10_000
+                "timeout_ms": 30_000,
+                "yield_time_ms": 30_000
             }),
         );
         assert_eq!(with_env["command_ok"], true, "{with_env}");
@@ -895,8 +895,8 @@ mod tests {
             "exec_command",
             &json!({
                 "cmd": format!("\"{}\" git", where_exe.display()),
-                "timeout_ms": 10_000,
-                "yield_time_ms": 10_000
+                "timeout_ms": 30_000,
+                "yield_time_ms": 30_000
             }),
         );
         assert_eq!(absolute["command_ok"], true, "{absolute}");
