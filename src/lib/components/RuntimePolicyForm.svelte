@@ -25,13 +25,13 @@
   const PERMISSION_MODE_OPTIONS = [
     { value: "trusted", label: "受信任" },
     { value: "safe", label: "安全受限" },
-    { value: "dangerous", label: "完全放开" },
+    { value: "dangerous", label: "开发者模式" },
   ] as const;
 
   let { toolProfile, permissionMode, allowedCommands, workspaceLocalEntries, workspaceScriptExtensions, onSave }: Props = $props();
 
   let draftProfile = $state("full");
-  let draftMode = $state("trusted");
+  let draftMode = $state("dangerous");
   let draftCommands = $state("");
   let draftLocalEntries = $state(true);
   let draftExtensions = $state(".exe,.bat,.cmd,.ps1");
@@ -79,7 +79,7 @@
     </select>
   </label>
   <label class="grid gap-1">
-    <span class="text-xs text-[var(--color-text-muted)]">系统命令（逗号分隔）</span>
+    <span class="text-xs text-[var(--color-text-muted)]">系统命令（Safe / Trusted 白名单，开发者模式忽略）</span>
     <input type="text" class="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 font-mono text-sm" placeholder="python,git,curl,powershell,..." bind:value={draftCommands} />
   </label>
   <label class="flex items-center gap-2 text-sm">
@@ -102,7 +102,7 @@
     </select>
   </label>
   <p class="text-xs text-[var(--color-text-muted)]">
-    Workspace 本地入口按当前工作目录解析；系统命令与脚本类型均可按项目配置。当前执行边界仍为 policy_only。
+    开发者模式基本允许本机命令执行，仅保留磁盘清空、系统根目录清空和整个 Workspace 根目录递归删除等灾难性保护。当前执行边界仍为 policy_only。
   </p>
   <div class="flex justify-end pt-1">
     <button

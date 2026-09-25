@@ -370,9 +370,11 @@ MCP、Actions OpenAPI、`server_info`、工具门禁和契约测试都从该定�
 
 ### 默认策略
 
-- 新工作区默认 `safe`。
-- `trusted` 允许网络和更多开发命令，但仍阻止破坏性操作。
-- `dangerous` 仅由桌面用户显式选择，并显示持续风险提示。
+- 本项目的桌面端定位为用户自有开发机上的 AI 执行桥；新工作区默认 `dangerous`，已有工作区继续尊重其已保存的权限模式。
+- `safe` 保留为未知代码/低信任场景的受限模式。
+- `trusted` 允许网络、inline script 与 shell 组合命令，但仍保留 allowlist 和常规破坏性操作门禁。
+- `dangerous` 在 GUI 中显示为“开发者模式”：不使用 executable allowlist，并放开 shell、inline script、额外环境变量、外部可执行文件和常规破坏性开发命令。
+- 无论权限模式如何，仍保留极小的灾难性安全地板：拒绝明显的磁盘清空/格式化、文件系统根目录递归清空、整个 Workspace 根目录递归删除。
 
 ### 环境
 

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::tools::context::ToolContext;
 use super::command_line::split_command;
 use super::exec_paths::resolve_workdir;
-use super::policy::is_allowlisted_program;
+use super::policy::{command_requires_shell, is_allowlisted_program};
 use crate::tools::session::{ExecSession, SessionStore};
 use crate::tools::workspace::{tool_ok, WorkspaceError};
 
@@ -38,23 +38,25 @@ pub fn exec_command(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceE
         .unwrap_or("workspace")
         .to_string();
     validate_child_process_scope(ctx, args)?;
-    if let Some(result) = run_native_diagnostic(ctx, cmd, &workdir.path)? {
-        let mut result = result;
-        if let Some(object) = result.as_object_mut() {
-            object.insert(
-                "filesystem_scope".into(),
-                Value::String(filesystem_scope.clone()),
-            );
-            object.insert("sandbox_enforced".into(), Value::Bool(false));
-            object.insert(
-                "execution_boundary".into(),
-                Value::String("policy_only".into()),
-            );
-            object.insert("child_process".into(), Value::Bool(false));
-            object.insert("transport_ok".into(), Value::Bool(true));
-            object.insert("command_ok".into(), Value::Bool(true));
+    if args.get("env").is_none() {
+        if let Some(result) = run_native_diagnostic(ctx, cmd, &workdir.path)? {
+            let mut result = result;
+            if let Some(object) = result.as_object_mut() {
+                object.insert(
+                    "filesystem_scope".into(),
+                    Value::String(filesystem_scope.clone()),
+                );
+                object.insert("sandbox_enforced".into(), Value::Bool(false));
+                object.insert(
+                    "execution_boundary".into(),
+                    Value::String("policy_only".into()),
+                );
+                object.insert("child_process".into(), Value::Bool(false));
+                object.insert("transport_ok".into(), Value::Bool(true));
+                object.insert("command_ok".into(), Value::Bool(true));
+            }
+            return Ok(tool_ok(result));
         }
-        return Ok(tool_ok(result));
     }
     let timeout_ms = args
         .get("timeout_ms")
@@ -71,6 +73,7 @@ pub fn exec_command(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceE
         .min(30_000);
     let tty = args.get("tty").and_then(Value::as_bool).unwrap_or(false);
     let stdin_text = args.get("stdin").and_then(Value::as_str).unwrap_or("");
+    let requested_env = requested_env(args)?;
 
     let result = tauri::async_runtime::block_on(async {
         run_command(
@@ -82,6 +85,7 @@ pub fn exec_command(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceE
             max_output,
             tty,
             stdin_text,
+            &requested_env,
         )
         .await
     });
@@ -104,6 +108,40 @@ pub fn exec_command(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceE
             None => Err(error),
         },
     }
+}
+
+fn command_for_shell(command_line: &str) -> Command {
+    #[cfg(windows)]
+    {
+        let mut command = Command::new("cmd.exe");
+        command.args(["/d", "/s", "/c"]).arg(command_line);
+        command.creation_flags(windows_hidden_creation_flags());
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new("sh");
+        command.args(["-c", command_line]);
+        command
+    }
+}
+
+fn requested_env(args: &Value) -> Result<Vec<(String, String)>, WorkspaceError> {
+    let Some(env) = args.get("env") else {
+        return Ok(Vec::new());
+    };
+    let object = env
+        .as_object()
+        .ok_or_else(|| WorkspaceError::invalid_argument("env must be an object"))?;
+    object
+        .iter()
+        .map(|(key, value)| {
+            value
+                .as_str()
+                .map(|value| (key.clone(), value.to_string()))
+                .ok_or_else(|| WorkspaceError::invalid_argument("env values must be strings"))
+        })
+        .collect()
 }
 
 fn validate_child_process_scope(_ctx: &ToolContext, args: &Value) -> Result<(), WorkspaceError> {
@@ -137,6 +175,9 @@ fn run_native_diagnostic(
     cmd: &str,
     cwd: &Path,
 ) -> Result<Option<Value>, WorkspaceError> {
+    if command_requires_shell(cmd) {
+        return Ok(None);
+    }
     let parts = split_command(cmd).map_err(WorkspaceError::invalid_argument)?;
     if parts.is_empty() {
         return Ok(None);
@@ -234,11 +275,25 @@ async fn run_command(
     max_output: usize,
     tty: bool,
     stdin_text: &str,
+    requested_env: &[(String, String)],
 ) -> Result<Value, WorkspaceError> {
-    let (program, args) = parse_and_resolve(cmd, cwd, ctx.workspace.root(), &ctx.policy)?;
+    let needs_shell = command_requires_shell(cmd);
+    if needs_shell && !ctx.policy.shell_syntax_allowed() {
+        return Err(WorkspaceError::Tool {
+            code: "COMMAND_REJECTED",
+            message: "Shell syntax is blocked in safe permission mode".into(),
+            category: "policy",
+            retryable: false,
+        });
+    }
     let start = Instant::now();
 
-    let mut command = command_for_program(&program, &args);
+    let mut command = if needs_shell {
+        command_for_shell(cmd)
+    } else {
+        let (program, args) = parse_and_resolve(cmd, cwd, ctx.workspace.root(), &ctx.policy)?;
+        command_for_program(&program, &args)
+    };
     command
         .current_dir(platform_command_path(cwd))
         .stdin(std::process::Stdio::piped())
@@ -250,6 +305,7 @@ async fn run_command(
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONLEGACYWINDOWSSTDIO", "0");
+    command.envs(requested_env.iter().map(|(key, value)| (key, value)));
 
     let child = command.spawn().map_err(|e| WorkspaceError::ToolDetails {
         code: "COMMAND_SPAWN_FAILED",
@@ -270,7 +326,14 @@ async fn run_command(
     if yield_time.is_zero() {
         let snapshot = session.snapshot(max_output);
         spawn_timeout_monitor(ctx.sessions.clone(), session.clone(), deadline);
-        return Ok(merge_exec_result(snapshot, start, cmd, cwd, true));
+        return Ok(merge_exec_result(
+            snapshot,
+            start,
+            cmd,
+            cwd,
+            true,
+            needs_shell,
+        ));
     }
 
     if !tty && !stdin_text.is_empty() {
@@ -300,7 +363,14 @@ async fn run_command(
             session.wait_for_readers().await;
             let snapshot = session.snapshot(max_output);
             ctx.sessions.remove(&session.session_id);
-            return Ok(merge_exec_result(snapshot, start, cmd, cwd, false));
+            return Ok(merge_exec_result(
+                snapshot,
+                start,
+                cmd,
+                cwd,
+                false,
+                needs_shell,
+            ));
         }
         if !tty && Instant::now() >= deadline {
             session.mark_termination_reason("timeout");
@@ -326,7 +396,14 @@ async fn run_command(
         if Instant::now() - start >= yield_time || tty {
             let snapshot = session.snapshot(max_output);
             spawn_timeout_monitor(ctx.sessions.clone(), session.clone(), deadline);
-            return Ok(merge_exec_result(snapshot, start, cmd, cwd, true));
+            return Ok(merge_exec_result(
+                snapshot,
+                start,
+                cmd,
+                cwd,
+                true,
+                needs_shell,
+            ));
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
@@ -379,6 +456,7 @@ pub fn exec_health_check(ctx: &ToolContext) -> Result<Value, WorkspaceError> {
         16_384,
         false,
         "",
+        &[],
     ));
 
     let mut response = json!({
@@ -486,6 +564,7 @@ fn merge_exec_result(
     command: &str,
     cwd: &Path,
     keep_session: bool,
+    used_shell: bool,
 ) -> Value {
     if let Some(obj) = snapshot.as_object_mut() {
         let duration_ms = start.elapsed().as_millis();
@@ -511,10 +590,20 @@ fn merge_exec_result(
             "command_ok".into(),
             command_ok.map(Value::Bool).unwrap_or(Value::Null),
         );
-        obj.insert("execution_mode".into(), json!("direct"));
+        obj.insert(
+            "execution_mode".into(),
+            json!(if used_shell { "shell" } else { "direct" }),
+        );
         obj.insert(
             "warnings".into(),
-            json!(if keep_session {
+            json!(if used_shell && keep_session {
+                vec![
+                    "shell execution enabled by permission mode",
+                    "session retained for read_output/write_stdin/kill_session",
+                ]
+            } else if used_shell {
+                vec!["shell execution enabled by permission mode"]
+            } else if keep_session {
                 vec!["session retained for read_output/write_stdin/kill_session"]
             } else {
                 vec!["direct execution without shell"]
@@ -557,6 +646,9 @@ fn resolve_program(
         cwd.join(trimmed)
     };
     if candidate.is_file() {
+        if policy.skip_permission_gates() {
+            return Ok(candidate.to_string_lossy().into_owned());
+        }
         let resolved = candidate.canonicalize().map_err(|_| WorkspaceError::Tool {
             code: "COMMAND_REJECTED",
             message: format!("Program not found: {trimmed}"),
@@ -736,6 +828,82 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn trusted_shell_and_dangerous_system_exec_run_for_real() {
+        let workspace = tempdir().expect("workspace");
+        let harness = tempdir().expect("harness");
+        std::fs::write(workspace.path().join("hash-me.txt"), "dangerous-mode\n")
+            .expect("hash fixture");
+
+        let trusted =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("trusted context");
+        let shell = call_tool(
+            &trusted,
+            "exec_command",
+            &json!({
+                "cmd": "echo trusted-shell-one && echo trusted-shell-two",
+                "timeout_ms": 10_000,
+                "yield_time_ms": 10_000
+            }),
+        );
+        assert_eq!(shell["command_ok"], true, "{shell}");
+        assert_eq!(shell["execution_mode"], "shell", "{shell}");
+        assert!(shell["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("trusted-shell-two"));
+
+        let mut dangerous =
+            ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                .expect("dangerous context");
+        dangerous.permission_mode = "dangerous".into();
+        dangerous.policy.permission_mode = "dangerous".into();
+
+        let certutil = call_tool(
+            &dangerous,
+            "exec_command",
+            &json!({
+                "cmd": "certutil -hashfile hash-me.txt SHA256",
+                "timeout_ms": 10_000,
+                "yield_time_ms": 10_000
+            }),
+        );
+        assert_eq!(certutil["command_ok"], true, "{certutil}");
+
+        let with_env = call_tool(
+            &dangerous,
+            "exec_command",
+            &json!({
+                "cmd": "python -c \"import os; print(os.environ['CTMCP_DANGEROUS_ENV'])\"",
+                "env": {"CTMCP_DANGEROUS_ENV": "env-ok"},
+                "timeout_ms": 10_000,
+                "yield_time_ms": 10_000
+            }),
+        );
+        assert_eq!(with_env["command_ok"], true, "{with_env}");
+        assert!(with_env["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("env-ok"));
+
+        let system_root = std::env::var("SystemRoot").expect("SystemRoot");
+        let where_exe = std::path::Path::new(&system_root)
+            .join("System32")
+            .join("where.exe");
+        let absolute = call_tool(
+            &dangerous,
+            "exec_command",
+            &json!({
+                "cmd": format!("\"{}\" git", where_exe.display()),
+                "timeout_ms": 10_000,
+                "yield_time_ms": 10_000
+            }),
+        );
+        assert_eq!(absolute["command_ok"], true, "{absolute}");
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn windows_workspace_scripts_and_python_unicode_execute_successfully() {
         let workspace = tempdir().expect("workspace");
         let harness = tempdir().expect("harness");
@@ -778,7 +946,11 @@ mod tests {
             let output = call_tool(
                 &ctx,
                 "exec_command",
-                &json!({ "cmd": "python -m workflow_probe", "timeout_ms": 10_000 }),
+                &json!({
+                    "cmd": "python -m workflow_probe",
+                    "timeout_ms": 10_000,
+                    "yield_time_ms": 10_000
+                }),
             );
             assert_eq!(output["command_ok"], true, "{output}");
             assert!(output["stdout"]

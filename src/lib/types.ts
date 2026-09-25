@@ -110,7 +110,7 @@ export function actionsConfig(profile: WorkspaceProfile): ActionsConfig {
     cloudflare_http2: true,
     frp_tls: false,
     local_port: DEFAULT_ACTIONS_PORT,
-    permission_mode: "trusted",
+    permission_mode: "dangerous",
     auth_type: "api_key",
     allowed_commands:
       "pytest,python,python3,npm,npx,node,pnpm,yarn,make,mvn,mvnw,gradle,gradlew,cargo,go,ruff,mypy,eslint,tsc",

@@ -66,7 +66,7 @@ graph TB
 | path | String | 存在的目录 | 项目根目录 |
 | runtime.local_port | u16 | 1024-65535 | MCP 监听端口，默认 28766 |
 | runtime.tool_profile | enum | full / read-only | 工具暴露策略 |
-| runtime.permission_mode | enum | safe / trusted / dangerous | 权限模式 |
+| runtime.permission_mode | enum | safe / trusted / dangerous；新 Workspace 默认 dangerous | 权限模式 |
 | tunnel.type | enum | frp / cloudflare / none | 隧道类型 |
 | tunnel.frp_server | String | FRP 时必填 | FRP 服务器域名 |
 | tunnel.frp_subdomain | String | FRP 时必填 | FRP 子域名 |
