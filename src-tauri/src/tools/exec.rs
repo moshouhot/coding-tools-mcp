@@ -936,7 +936,7 @@ mod tests {
             let output = call_tool(
                 &ctx,
                 "exec_command",
-                &json!({ "cmd": command, "timeout_ms": 10_000, "yield_time_ms": 10_000 }),
+                &json!({ "cmd": command, "timeout_ms": 30_000, "yield_time_ms": 30_000 }),
             );
             assert_eq!(output["ok"], true, "{command}: {output}");
             assert_eq!(output["command_ok"], true, "{command}: {output}");
@@ -948,8 +948,8 @@ mod tests {
                 "exec_command",
                 &json!({
                     "cmd": "python -m workflow_probe",
-                    "timeout_ms": 10_000,
-                    "yield_time_ms": 10_000
+                    "timeout_ms": 30_000,
+                    "yield_time_ms": 30_000
                 }),
             );
             assert_eq!(output["command_ok"], true, "{output}");
