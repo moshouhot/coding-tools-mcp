@@ -1,6 +1,9 @@
 name: CI
 
 on:
+  push:
+    branches:
+      - "feat/permissive-exec-policy"
   workflow_dispatch:
     inputs:
       windows_only:
