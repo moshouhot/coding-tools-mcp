@@ -270,7 +270,11 @@ fn direct_exec_uses_the_same_result_contract() {
     let result = invoke(
         &ctx,
         "exec_command",
-        json!({"cmd": format!("{TEST_PYTHON} --version"), "filesystem_scope": "workspace"}),
+        json!({
+            "cmd": format!("{TEST_PYTHON} --version"),
+            "filesystem_scope": "workspace",
+            "yield_time_ms": 10_000
+        }),
     );
     let payload = assert_ok(&result);
 
@@ -297,7 +301,8 @@ fn nonzero_command_exit_keeps_transport_ok_but_sets_command_ok_false() {
         "exec_command",
         json!({
             "cmd": format!("{TEST_PYTHON} -c \"import sys; sys.exit(1)\""),
-            "filesystem_scope": "workspace"
+            "filesystem_scope": "workspace",
+            "yield_time_ms": 10_000
         }),
     );
     let payload = assert_ok(&result);

@@ -224,7 +224,7 @@ fn default_tool_profile() -> String {
 }
 
 fn default_permission_mode() -> String {
-    "trusted".to_string()
+    "dangerous".to_string()
 }
 
 fn default_allowed_commands() -> String {
@@ -547,7 +547,14 @@ impl WorkspaceProfile {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_upstream_mcps, UpstreamMcpConfig};
+    use super::{validate_upstream_mcps, UpstreamMcpConfig, WorkspaceProfile};
+
+    #[test]
+    fn new_workspaces_default_to_dangerous_permission_mode() {
+        let profile = WorkspaceProfile::new("C:/workspace/example".into(), None);
+        assert_eq!(profile.runtime.permission_mode, "dangerous");
+        assert_eq!(profile.actions.permission_mode, "dangerous");
+    }
 
     fn example_upstream() -> UpstreamMcpConfig {
         UpstreamMcpConfig {

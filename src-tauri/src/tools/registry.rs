@@ -750,13 +750,14 @@ pub fn input_schema(name: &str) -> Value {
         "exec_command" => json!({
             "type": "object",
             "properties": {
-                "cmd": { "type": "string", "minLength": 1, "description": "Direct command, without shell chaining. Windows uses double quotes and literal path backslashes; macOS/Linux use POSIX argument quoting. Use the project's interpreter entry. Inspect command_ok, status and exit_code; running requires session polling." },
+                "cmd": { "type": "string", "minLength": 1, "description": "Command to execute. Safe mode rejects shell chaining/redirection; trusted and dangerous may invoke the platform shell when shell syntax is present. Inspect command_ok, status and exit_code; running requires session polling." },
                 "workdir": { "type": "string", "default": ".", "description": "Relative to the workspace or an absolute directory inside it. External paths and parent traversal are rejected." },
-                "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 600000, "default": 30000 },
+                "timeout_ms": { "type": "integer", "minimum": 1, "default": 30000, "description": "Safe/trusted are capped at 600000 ms; dangerous mode may request longer timeouts." },
                 "max_output_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 65536 },
                 "yield_time_ms": { "type": "integer", "minimum": 0, "maximum": 30000, "default": 1000 },
                 "tty": { "type": "boolean", "default": false },
                 "stdin": { "type": "string", "default": "" },
+                "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Additional child-process environment variables. Accepted only in dangerous mode." },
                 "confirm": { "type": "boolean", "default": false },
                 "filesystem_scope": { "type": "string", "enum": ["workspace"], "default": "workspace" },
                 "reason": { "type": "string", "default": "" }

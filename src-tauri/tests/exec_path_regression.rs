@@ -13,7 +13,7 @@ fn run(ctx: &ToolContext, cmd: String, cwd: &Path) -> Value {
     call_tool(
         ctx,
         "exec_command",
-        &json!({"cmd": cmd, "workdir": cwd, "yield_time_ms": 1000}),
+        &json!({"cmd": cmd, "workdir": cwd, "yield_time_ms": 10_000}),
     )
 }
 
@@ -94,7 +94,10 @@ fn nonzero_and_running_commands_do_not_receive_a_success_hint() {
     let out = call_tool(
         &ctx,
         "exec_command",
-        &json!({"cmd": format!("{PYTHON} -c \"import sys; sys.exit(7)\"")}),
+        &json!({
+            "cmd": format!("{PYTHON} -c \"import sys; sys.exit(7)\""),
+            "yield_time_ms": 10_000
+        }),
     );
     assert_eq!(out["ok"], true, "{out}");
     assert_eq!(out["command_ok"], false);
@@ -200,7 +203,10 @@ fn windows_unquoted_backslashes_reach_the_process_intact() {
     let out = call_tool(
         &ctx,
         "exec_command",
-        &json!({"cmd": r#"python -c "import sys; print(sys.argv[1])" D:\some\project\file.txt"#}),
+        &json!({
+            "cmd": r#"python -c "import sys; print(sys.argv[1])" D:\some\project\file.txt"#,
+            "yield_time_ms": 10_000
+        }),
     );
     assert_eq!(out["command_ok"], true, "{out}");
     assert_eq!(

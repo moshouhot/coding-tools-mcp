@@ -13,6 +13,9 @@ use super::exec_paths::{contains_external_path, resolve_workdir};
 static NETWORK_COMMAND_PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static DANGEROUS_COMMAND_PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 static INTERPRETER_MUTATION_PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static CATASTROPHIC_DISK_PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static RECURSIVE_DELETE_PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+static CURRENT_DIR_DELETE_PATTERN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
 
 const BASIC_READ_ONLY_COMMANDS: &[&str] = &[
     "pwd", "ls", "dir", "cat", "head", "tail", "grep", "find", "which", "echo",
@@ -64,6 +67,212 @@ pub struct PolicySettings {
     pub permission_mode: String,
 }
 
+fn validate_trusted_shell_segments(command: &str, policy: &PolicySettings) -> Result<(), PolicyError> {
+    for segment in top_level_shell_segments(command) {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        let parts = split_command(segment).map_err(|message| PolicyError(message.into()))?;
+        let Some(executable) = parts.first() else {
+            continue;
+        };
+        let executable = executable.trim_start_matches("./");
+        let base_name = executable.rsplit(['/', '\\']).next().unwrap_or(executable);
+        let stem = base_name
+            .strip_suffix(".exe")
+            .or_else(|| base_name.strip_suffix(".cmd"))
+            .or_else(|| base_name.strip_suffix(".bat"))
+            .unwrap_or(base_name);
+        if !is_allowlisted_program(policy, stem) {
+            return Err(PolicyError(format!(
+                "Command is not allowlisted in trusted shell segment: {stem}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn top_level_shell_segments(command: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for ch in command.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        match quote {
+            Some('\'') => {
+                current.push(ch);
+                if ch == '\'' {
+                    quote = None;
+                }
+            }
+            Some('"') => {
+                current.push(ch);
+                if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    quote = None;
+                }
+            }
+            Some(_) => current.push(ch),
+            None => {
+                if ch == '\'' || ch == '"' {
+                    quote = Some(ch);
+                    current.push(ch);
+                } else if matches!(ch, ';' | '&' | '|') || matches!(ch, '\r' | '\n') {
+                    if !current.trim().is_empty() {
+                        segments.push(std::mem::take(&mut current));
+                    } else {
+                        current.clear();
+                    }
+                } else {
+                    current.push(ch);
+                }
+            }
+        }
+    }
+    if !current.trim().is_empty() {
+        segments.push(current);
+    }
+    segments
+}
+
+fn catastrophic_command_reason(
+    command: &str,
+    arguments: &Value,
+    workspace: Option<&Workspace>,
+) -> Option<String> {
+    let normalized = command.to_ascii_lowercase().replace('\\', "/");
+
+    if catastrophic_disk_pattern().is_match(&normalized) {
+        return Some("refusing disk format / disk wipe command".into());
+    }
+    if recursive_delete_targets_filesystem_root(&normalized) {
+        return Some("refusing recursive deletion of a filesystem root".into());
+    }
+
+    let Some(workspace) = workspace else {
+        return None;
+    };
+    if !recursive_delete_pattern().is_match(&normalized) {
+        return None;
+    }
+
+    let workspace_root = normalize_guard_path(workspace.root());
+    if !workspace_root.is_empty()
+        && recursive_delete_targets_guard_path(&normalized, &workspace_root)
+    {
+        return Some("refusing recursive deletion of the workspace root".into());
+    }
+
+    #[cfg(windows)]
+    if let Ok(system_root) = std::env::var("SystemRoot") {
+        let system_root = normalize_guard_path(Path::new(&system_root));
+        if !system_root.is_empty()
+            && recursive_delete_targets_guard_path(&normalized, &system_root)
+        {
+            return Some("refusing recursive deletion of the Windows system directory".into());
+        }
+    }
+    if ["%systemroot%", "%windir%", "$env:systemroot", "$env:windir"]
+        .iter()
+        .any(|guard| recursive_delete_targets_guard_path(&normalized, guard))
+    {
+        return Some("refusing recursive deletion of the Windows system directory".into());
+    }
+
+    let workdir = arguments
+        .get("workdir")
+        .or_else(|| arguments.get("cwd"))
+        .and_then(Value::as_str)
+        .unwrap_or(".");
+    let at_workspace_root = resolve_workdir(workspace, workdir)
+        .ok()
+        .and_then(|resolved| resolved.path.canonicalize().ok())
+        .zip(workspace.root().canonicalize().ok())
+        .is_some_and(|(cwd, root)| cwd == root);
+    if at_workspace_root && current_dir_delete_pattern().is_match(&normalized) {
+        return Some("refusing recursive deletion of the workspace root".into());
+    }
+
+    None
+}
+
+fn normalize_guard_path(path: &Path) -> String {
+    let normalized = path
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .replace('\\', "/");
+    normalized
+        .strip_prefix("//?/")
+        .unwrap_or(&normalized)
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn catastrophic_disk_pattern() -> &'static regex::Regex {
+    CATASTROPHIC_DISK_PATTERN.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)(^|[;&|]\s*)(format(?:\.com)?\s+[a-z]:|mkfs(?:\.[a-z0-9_-]+)?\b|diskpart\b[^\r\n]*\bclean(?:\s+all)?\b|clear-disk\b|format-volume\b)",
+        )
+        .expect("valid regex")
+    })
+}
+
+fn recursive_delete_pattern() -> &'static regex::Regex {
+    RECURSIVE_DELETE_PATTERN.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)(\brm\s+(?:-[^\s]*r[^\s]*\b|--recursive\b)|\bremove-item\b[^\r\n]*-recurse\b|\b(?:rmdir|rd)\s+/s\b|\b(?:del|erase)\s+/s\b|shutil\.rmtree\s*\()",
+        )
+        .expect("valid regex")
+    })
+}
+
+fn recursive_delete_targets_filesystem_root(command: &str) -> bool {
+    let root_target = regex::Regex::new(
+        r#"(?i)(?:^|[\s'\"(=,])(?:/|[a-z]:/+)(?:\*)?(?:$|[\s'\"),])"#,
+    )
+    .expect("valid root target regex");
+    command
+        .split([';', '&', '|', '\r', '\n'])
+        .any(|segment| {
+            recursive_delete_pattern().is_match(segment) && root_target.is_match(segment)
+        })
+}
+
+fn recursive_delete_targets_guard_path(command: &str, guard: &str) -> bool {
+    if guard.is_empty() {
+        return false;
+    }
+    let escaped = regex::escape(guard.trim_end_matches('/'));
+    let target = format!(
+        r#"(?:^|[\s'\"(=,]){escaped}(?:/+\*?)?(?:$|[\s'\"),])"#
+    );
+    let Ok(target_pattern) = regex::Regex::new(&target) else {
+        return false;
+    };
+
+    command
+        .split([';', '&', '|', '\r', '\n'])
+        .any(|segment| {
+            recursive_delete_pattern().is_match(segment) && target_pattern.is_match(segment)
+        })
+}
+
+fn current_dir_delete_pattern() -> &'static regex::Regex {
+    CURRENT_DIR_DELETE_PATTERN.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?i)(\brm\s+(?:-[^\s]*r[^\s]*|--recursive)\s+(?:\.|\./|\.\/\*|\*)\s*$|\bremove-item\b[^\r\n]*(?:\s\.\s|\s\*\s)[^\r\n]*-recurse\b|\bremove-item\b[^\r\n]*-recurse[^\r\n]*(?:\s\.\s*$|\s\*\s*$)|\b(?:rmdir|rd)\s+/s\b[^\r\n]*\s\.\s*$|\bdel\s+/s\b[^\r\n]*\s\*\s*$|shutil\.rmtree\s*\(\s*['\"]\.['\"]\s*\))"#,
+        )
+        .expect("valid regex")
+    })
+}
+
 impl Default for PolicySettings {
     fn default() -> Self {
         Self {
@@ -71,6 +280,8 @@ impl Default for PolicySettings {
             workspace_local_entries: true,
             workspace_script_extensions: default_workspace_script_extension_set(),
             max_patch_bytes: 200_000,
+            // Internal/test fallback remains conservative. New persisted workspaces
+            // default to dangerous via workspace::default_permission_mode().
             permission_mode: "trusted".into(),
         }
     }
@@ -105,6 +316,10 @@ impl PolicySettings {
 
     pub fn skip_permission_gates(&self) -> bool {
         self.permission_mode == "dangerous"
+    }
+
+    pub fn shell_syntax_allowed(&self) -> bool {
+        self.permission_mode == "trusted" || self.permission_mode == "dangerous"
     }
 }
 
@@ -214,7 +429,7 @@ pub fn validate_command_for_workspace(
     if command.trim().is_empty() {
         return Err(PolicyError("exec_command requires a non-empty cmd".into()));
     }
-    if command.len() > 4_000 {
+    if !policy.skip_permission_gates() && command.len() > 4_000 {
         return Err(PolicyError("Command is too long".into()));
     }
     let filesystem_scope = arguments
@@ -242,26 +457,37 @@ pub fn validate_command_for_workspace(
     }
     let parts = split_command(command).map_err(|message| PolicyError(message.into()))?;
     if parts.is_empty() { return Err(PolicyError("Empty command".into())); }
-    if has_forbidden_shell_syntax(command) {
+    if let Some(reason) = catastrophic_command_reason(command, arguments, workspace) {
+        return Err(PolicyError(format!("CATASTROPHIC_OPERATION_BLOCKED: {reason}")));
+    }
+    if command_requires_shell(command) && !policy.shell_syntax_allowed() {
         return Err(PolicyError(
-            "Shell chaining, redirection and expansion are not allowed".into(),
+            "Shell chaining, redirection and expansion are blocked in safe permission mode".into(),
         ));
     }
-    if (dangerous_command_pattern().is_match(command)
-        || interpreter_mutation_pattern().is_match(command))
+    if command_requires_shell(command) && policy.permission_mode == "trusted" {
+        validate_trusted_shell_segments(command, policy)?;
+    }
+    if !policy.skip_permission_gates()
+        && (dangerous_command_pattern().is_match(command)
+            || interpreter_mutation_pattern().is_match(command))
         && command_targets_protected_repository_asset(command)
     {
         return Err(PolicyError(
             "PROTECTED_REPOSITORY_ASSET: 禁止删除或递归清空 .git/.github".into(),
         ));
     }
-    if interpreter_mutation_pattern().is_match(command) && contains_external_path(&parts[1..], workspace) {
+    if !policy.skip_permission_gates()
+        && interpreter_mutation_pattern().is_match(command)
+        && contains_external_path(&parts[1..], workspace)
+    {
         return Err(PolicyError(
             "WORKSPACE_PATH_PROTECTED: workspace scope 禁止通过子进程写入 Workspace 外部路径"
                 .into(),
         ));
     }
-    if dangerous_command_pattern().is_match(command)
+    if !policy.skip_permission_gates()
+        && dangerous_command_pattern().is_match(command)
         && !arguments
             .get("confirm")
             .and_then(Value::as_bool)
@@ -295,20 +521,21 @@ pub fn validate_command_for_workspace(
             .workspace_script_extensions
             .iter()
             .any(|extension| base_name.to_ascii_lowercase().ends_with(extension));
-    if !(is_allowlisted_program(policy, stem)
-        || (policy.workspace_local_entries && workspace_entry_candidate))
+    if !policy.skip_permission_gates()
+        && !(is_allowlisted_program(policy, stem)
+            || (policy.workspace_local_entries && workspace_entry_candidate))
     {
         return Err(PolicyError(format!("Command is not allowlisted: {stem}")));
     }
 
-    if arguments.get("env").is_some() {
+    if !policy.skip_permission_gates() && arguments.get("env").is_some() {
         return Err(PolicyError(
             "Environment variables cannot be supplied by GPT".into(),
         ));
     }
 
     if let Some(timeout_ms) = arguments.get("timeout_ms").and_then(Value::as_u64) {
-        if timeout_ms > 600_000 {
+        if !policy.skip_permission_gates() && timeout_ms > 600_000 {
             return Err(PolicyError("Command timeout exceeds 10 minutes".into()));
         }
     }
@@ -368,7 +595,7 @@ pub fn validate_patch(arguments: &Value, policy: &PolicySettings) -> Result<(), 
     Ok(())
 }
 
-fn has_forbidden_shell_syntax(command: &str) -> bool {
+pub(super) fn command_requires_shell(command: &str) -> bool {
     if command.contains(['\r', '\n']) {
         return true;
     }
@@ -565,7 +792,7 @@ mod tests {
     }
 
     #[test]
-    fn quoted_python_code_is_not_treated_as_shell_chaining() {
+    fn trusted_allows_shell_syntax_while_safe_still_blocks_it() {
         let policy = PolicySettings::default();
         assert!(validate_command(
             &json!({"cmd": "python -c \"import os; print(os.getcwd())\""}),
@@ -576,7 +803,108 @@ mod tests {
             &json!({"cmd": "python -c \"print(1)\" && echo nope"}),
             &policy
         )
+        .is_ok());
+        assert!(validate_command(&json!({"cmd": "echo hello > output.txt"}), &policy).is_ok());
+
+        let safe = PolicySettings {
+            permission_mode: "safe".into(),
+            ..PolicySettings::default()
+        };
+        assert!(validate_command(
+            &json!({"cmd": "python -c \"print(1)\" && echo nope"}),
+            &safe
+        )
         .is_err());
-        assert!(validate_command(&json!({"cmd": "echo hello > output.txt"}), &policy).is_err());
+        assert!(validate_command(&json!({"cmd": "echo hello > output.txt"}), &safe).is_err());
+
+        let bypass = validate_command(
+            &json!({"cmd": "echo allowed && certutil -hashfile README.md SHA256"}),
+            &policy,
+        )
+        .expect_err("trusted shell chaining must not bypass the executable allowlist");
+        assert!(bypass.0.contains("certutil"), "{bypass}");
+    }
+
+    #[test]
+    fn dangerous_mode_bypasses_normal_exec_gates() {
+        let policy = PolicySettings {
+            permission_mode: "dangerous".into(),
+            ..PolicySettings::default()
+        };
+        for args in [
+            json!({"cmd": "certutil -hashfile README.md SHA256"}),
+            json!({"cmd": "git reset --hard HEAD"}),
+            json!({"cmd": "echo first && where.exe git"}),
+            json!({"cmd": "python -c \"print('inline')\"", "env": {"LOCAL_TEST_FLAG": "1"}}),
+            json!({"cmd": "python --version", "timeout_ms": 3_600_000_u64}),
+        ] {
+            validate_command(&args, &policy)
+                .unwrap_or_else(|err| panic!("dangerous mode should accept {args}: {err}"));
+        }
+    }
+
+    #[test]
+    fn dangerous_mode_keeps_catastrophic_safety_floor() {
+        let workspace_dir = tempfile::tempdir().expect("workspace");
+        let workspace = Workspace::new(workspace_dir.path().to_path_buf()).expect("workspace");
+        let policy = PolicySettings {
+            permission_mode: "dangerous".into(),
+            ..PolicySettings::default()
+        };
+
+        for command in [
+            "format C:",
+            "mkfs.ext4 /dev/sda",
+            "rm -rf /",
+            "rm -r /",
+            "powershell -Command \"Remove-Item $env:SystemRoot -Recurse -Force\"",
+        ] {
+            let err = validate_command_for_workspace(
+                &json!({"cmd": command, "workdir": "."}),
+                &policy,
+                Some(&workspace),
+            )
+            .expect_err("catastrophic command must stay blocked");
+            assert!(err.0.contains("CATASTROPHIC_OPERATION_BLOCKED"), "{err}");
+        }
+
+        for command in ["rm -rf .", "rm -r .", "rm --recursive ."] {
+            let err = validate_command_for_workspace(
+                &json!({"cmd": command, "workdir": "."}),
+                &policy,
+                Some(&workspace),
+            )
+            .expect_err("workspace root deletion must stay blocked");
+            assert!(err.0.contains("workspace root"), "{err}");
+        }
+
+        let workspace_root = normalize_guard_path(workspace.root());
+        let err = validate_command_for_workspace(
+            &json!({
+                "cmd": format!("rm -rf \"{workspace_root}\""),
+                "workdir": "."
+            }),
+            &policy,
+            Some(&workspace),
+        )
+        .expect_err("absolute workspace root deletion must stay blocked");
+        assert!(err.0.contains("workspace root"), "{err}");
+
+        assert!(validate_command_for_workspace(
+            &json!({
+                "cmd": format!("rm -rf \"{workspace_root}/target\""),
+                "workdir": "."
+            }),
+            &policy,
+            Some(&workspace),
+        )
+        .is_ok());
+
+        assert!(validate_command_for_workspace(
+            &json!({"cmd": "powershell -Command \"Remove-Item target -Recurse -Force\"", "workdir": "."}),
+            &policy,
+            Some(&workspace),
+        )
+        .is_ok());
     }
 }
