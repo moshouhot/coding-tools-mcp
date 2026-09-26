@@ -54,7 +54,35 @@ fn policy_tool_err(err: PolicyError) -> Value {
 /// **唯一工具执行入口**。MCP `tools/call` 与 Actions `POST /actions/{tool}` 必须且只能调用此函数。
 /// 策略校验、分发、错误格式在此统一，两路传输层不得另做执行前校验（Actions 仅允许额外的暴露层 `validate_actions_exposure`）。
 pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
-    let effective_args = apply_default_cwd(ctx, name, args);
+    let effective_args = match prepare_effective_args(ctx, name, args) {
+        Ok(value) => value,
+        Err(error) => return tool_err(error),
+    };
+    call_tool_prepared(ctx, name, args, effective_args)
+}
+
+fn prepare_effective_args(
+    ctx: &ToolContext,
+    name: &str,
+    args: &Value,
+) -> Result<Value, WorkspaceError> {
+    let is_project_management = matches!(
+        name,
+        "server_info" | "get_active_project" | "set_active_project" | "discover_projects"
+    );
+    if is_project_management {
+        Ok(args.clone())
+    } else {
+        apply_default_cwd(ctx, name, args)
+    }
+}
+
+fn call_tool_prepared(
+    ctx: &ToolContext,
+    name: &str,
+    args: &Value,
+    effective_args: Value,
+) -> Value {
     if let Err(e) = validate_tool_arguments_for_workspace(
         name,
         &effective_args,
@@ -77,11 +105,22 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
         return result.unwrap_or_else(tool_err);
     }
 
-    let harness = match ctx.harness_for_session(project::host_session_key(&effective_args)) {
-        Ok(harness) => harness,
-        Err(error) => {
-            return tool_err_code(error.code(), error.to_string(), "permission");
+    let harness = match project::host_session_key(&effective_args)
+        .filter(|session_key| ctx.has_session_active_project(session_key))
+    {
+        Some(_) => {
+            let root = match project::effective_project_root(ctx, &effective_args) {
+                Ok(root) => root,
+                Err(error) => return tool_err(error),
+            };
+            match ctx.harness_for_project_root(&root) {
+                Ok(harness) => harness,
+                Err(error) => {
+                    return tool_err_code(error.code(), error.to_string(), "permission");
+                }
+            }
         }
+        None => ctx.harness.clone(),
     };
 
     if crate::harness::tools::TOOL_NAMES.contains(&name) {
@@ -274,8 +313,14 @@ pub fn call_tool_with_audit(
 ) -> Value {
     let started_at_ms = current_time_ms();
     let started = Instant::now();
-    let audited_args = strip_internal_context(apply_default_cwd(ctx, name, args));
-    let output = call_tool(ctx, name, args);
+    let prepared = prepare_effective_args(ctx, name, args);
+    let audited_args = strip_internal_context(
+        prepared.as_ref().cloned().unwrap_or_else(|_| args.clone()),
+    );
+    let output = match prepared {
+        Ok(effective_args) => call_tool_prepared(ctx, name, args, effective_args),
+        Err(error) => tool_err(error),
+    };
     let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
     let finished_at_ms = started_at_ms.saturating_add(elapsed_ms);
     if let Some(audit) = ctx.audit_store() {
@@ -322,8 +367,12 @@ pub fn record_tool_rejection_with_audit(
     }
 }
 
-fn apply_default_cwd(ctx: &ToolContext, name: &str, args: &Value) -> Value {
-    let active_project = project::active_project_root(ctx, args);
+fn apply_default_cwd(
+    ctx: &ToolContext,
+    name: &str,
+    args: &Value,
+) -> Result<Value, WorkspaceError> {
+    let active_project = project::active_project_root(ctx, args)?;
     let base = if active_project == ctx.workspace.root() {
         ".".to_string()
     } else {
@@ -337,11 +386,13 @@ fn apply_default_cwd(ctx: &ToolContext, name: &str, args: &Value) -> Value {
     if let Some(object) = effective.as_object_mut() {
         object.remove("_active_project_root");
     }
-    if base != "." {
+    let has_session_project = project::host_session_key(args)
+        .is_some_and(|session_key| ctx.has_session_active_project(session_key));
+    if base != "." || has_session_project {
         effective["_active_project_root"] = Value::String(base.clone());
     }
     if base == "." {
-        return effective;
+        return Ok(effective);
     }
 
     match name {
@@ -370,7 +421,7 @@ fn apply_default_cwd(ctx: &ToolContext, name: &str, args: &Value) -> Value {
         }
         _ => {}
     }
-    effective
+    Ok(effective)
 }
 
 fn prefix_relative_path(base: &str, path: &str) -> String {

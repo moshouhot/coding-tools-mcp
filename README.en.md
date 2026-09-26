@@ -68,7 +68,7 @@ If many projects live under the same parent directory, that parent can be used a
 
 Active Project state is scoped to the host conversation, so several Codex conversations can use the same Connector while working in different projects at the same time. An explicit user-designated project directory does not need `.git`, `package.json`, or `Cargo.toml`; `discover_projects` is only a fallback when the user gives a project name without an exact path, and automatic binding should happen only for a unique match.
 
-> Starting with `0.2.4-custom.4`, History / Harness also become project-aware when a Session Active Project is bound: History defaults to that project's own `docs/history-session`, while Harness tasks, baselines, and operation logs use a project-specific identity derived from the project root. Without a Session Active Project, the previous Workspace Pool fallback remains intact and existing data is not migrated or rewritten automatically.
+> Starting with `0.2.4-custom.5`, History / Harness become project-aware when a Session Active Project is bound: History defaults to that project's own `docs/history-session` and checkpoints validate project identity; Harness tasks, baselines, and operation logs use a project-specific identity while excluding History directories managed by Coding Tools MCP. Session → Active Project bindings are persisted locally and restored after restart; if a bound project becomes unavailable, the server fails explicitly instead of silently falling back to another project. Without a Session Active Project, the previous Workspace Pool fallback remains intact and existing data is not migrated or rewritten automatically.
 
 ### 3. Configure a public tunnel
 

@@ -288,6 +288,7 @@ fn history_archives_follow_session_active_project_and_remain_isolated() {
         json!({
             "session_key": "session-a",
             "expected_path": "docs/history-session/1.md",
+            "project_id": boot_a["project_id"],
             "raw_user_input": "PROJECT_A_NEXT",
             "_host_session_key": "session-a"
         }),
@@ -298,6 +299,7 @@ fn history_archives_follow_session_active_project_and_remain_isolated() {
         json!({
             "session_key": "session-b",
             "expected_path": "docs/history-session/1.md",
+            "project_id": boot_b["project_id"],
             "raw_user_input": "PROJECT_B_NEXT",
             "_host_session_key": "session-b"
         }),

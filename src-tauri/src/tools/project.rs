@@ -39,13 +39,35 @@ pub(crate) fn host_session_key(args: &Value) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
-pub(crate) fn active_project_root(ctx: &ToolContext, args: &Value) -> PathBuf {
+pub(crate) fn active_project_root(
+    ctx: &ToolContext,
+    args: &Value,
+) -> Result<PathBuf, WorkspaceError> {
     ctx.active_project_path(host_session_key(args))
+}
+
+pub(crate) fn effective_project_root(
+    ctx: &ToolContext,
+    args: &Value,
+) -> Result<PathBuf, WorkspaceError> {
+    if let Some(raw) = args.get("_active_project_root").and_then(Value::as_str) {
+        if raw == "." || raw.is_empty() {
+            return Ok(ctx.workspace.root().to_path_buf());
+        }
+        let resolved = ctx.workspace.resolve_existing(raw)?;
+        if !resolved.path.is_dir() {
+            return Err(WorkspaceError::not_a_directory(
+                "Active Project snapshot must be a directory",
+            ));
+        }
+        return Ok(resolved.path);
+    }
+    active_project_root(ctx, args)
 }
 
 pub fn get_active_project(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceError> {
     let session_key = host_session_key(args);
-    let project_root = ctx.active_project_path(session_key);
+    let project_root = ctx.active_project_path(session_key)?;
     let source = match session_key {
         Some(key) if ctx.has_session_active_project(key) => "session",
         _ if project_root != ctx.workspace.root() => "default_cwd",
@@ -74,7 +96,7 @@ pub fn set_active_project(ctx: &ToolContext, args: &Value) -> Result<Value, Work
         .filter(|value| !value.is_empty())
         .ok_or_else(|| WorkspaceError::invalid_argument("path is required"))?;
     let resolved = resolve_project_directory(ctx, raw)?;
-    ctx.set_session_active_project(session_key, resolved.clone());
+    ctx.set_session_active_project(session_key, resolved.clone())?;
     Ok(tool_ok(json!({
         "workspace": ctx.workspace.root_display(),
         "active_project": relative_display(ctx.workspace.root(), &resolved),

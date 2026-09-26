@@ -22,6 +22,7 @@ const MAX_READ_MAX_BYTES: usize = 64 * 1024;
 pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let (session_key, source) = resolve_session_key(args)?;
     let (history_workspace, history_dir) = resolve_scope(ctx, args)?;
+    let project_id = history_project_id(&history_workspace);
     storage::ensure_directory(&history_dir)?;
     let _lock = storage::lock_directory(&history_dir)?;
     let report = storage::scan(&history_workspace, &history_dir)?;
@@ -182,8 +183,9 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         "history_read_mode": "bounded_state_with_on_demand_search_and_read",
         "persistence_mode": "model_mediated_tool_calls",
         "project_root": history_workspace.root_display(),
+        "project_id": project_id,
         "history_scope": if history_workspace.root() == ctx.workspace.root() { "workspace" } else { "active_project" },
-        "assistant_instructions": "Use the bounded state to begin work. To recover exact earlier context, call history_session_search and then history_session_read for only the relevant archive. Preserve session_key and current_path. Before the final response for each user task, call history_session_checkpoint with the user's verbatim raw_user_input. The server can only save text passed as tool arguments and reports missing input explicitly.",
+        "assistant_instructions": "Use the bounded state to begin work. To recover exact earlier context, call history_session_search and then history_session_read for only the relevant archive. Preserve session_key, current_path, and project_id. Before the final response for each user task, call history_session_checkpoint with those exact target fields plus the user's verbatim raw_user_input. If Active Project changes, bootstrap/resume History for that project before checkpointing. The server can only save text passed as tool arguments and reports missing input explicitly.",
         "required_next_actions": [
             "review_bounded_state",
             "search_or_read_relevant_archives_when_precision_is_needed",
@@ -195,6 +197,7 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
             "tool": "history_session_checkpoint",
             "session_key": session_key,
             "expected_path": current_path,
+            "project_id": project_id,
             "raw_user_input_required_for_full_fidelity": true,
             "required_before_final_response": true,
             "automatic_background_persistence": false
@@ -213,10 +216,26 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
 pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let session_key = required_checkpoint_argument(args, "session_key")?;
     let expected_path = required_checkpoint_argument(args, "expected_path")?;
+    let expected_project_id = required_checkpoint_argument(args, "project_id")?;
     let host_session_key_mismatch = host_session_key(args)
         .map(|host| host != session_key.as_str())
         .unwrap_or(false);
     let (history_workspace, history_dir) = resolve_scope(ctx, args)?;
+    let resolved_project_id = history_project_id(&history_workspace);
+    if expected_project_id != resolved_project_id {
+        return Err(history_error(
+            "SESSION_PROJECT_MISMATCH",
+            "The checkpoint belongs to a different project than the current Active Project.",
+            "validation",
+            false,
+            json!({
+                "expected_project_id": expected_project_id,
+                "resolved_project_id": resolved_project_id,
+                "project_root": history_workspace.root_display(),
+                "suggestion": "Bootstrap or resume History for the current Active Project before checkpointing."
+            }),
+        ));
+    }
     if !history_dir.exists() {
         return Err(session_not_bootstrapped());
     }
@@ -314,6 +333,7 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         "path": document.path,
         "session_key": session_key,
         "expected_path": expected_path,
+        "project_id": resolved_project_id,
         "host_session_key_mismatch": host_session_key_mismatch,
         "turn_id": record.turn_id,
         "revision": record.revision,
@@ -713,7 +733,7 @@ fn required_checkpoint_argument(args: &Value, name: &str) -> WorkspaceResult<Str
         .ok_or_else(|| {
             history_error(
                 "CHECKPOINT_TARGET_REQUIRED",
-                "Pass session_key and expected_path exactly as returned by history_session_bootstrap.",
+                "Pass session_key, expected_path, and project_id exactly as returned by history_session_bootstrap.",
                 "validation",
                 false,
                 json!({"missing_argument": name}),
@@ -724,9 +744,10 @@ fn required_checkpoint_argument(args: &Value, name: &str) -> WorkspaceResult<Str
 fn resolve_scope(ctx: &ToolContext, args: &Value) -> WorkspaceResult<(Workspace, std::path::PathBuf)> {
     let active_session = host_session_key(args)
         .filter(|session_key| ctx.has_session_active_project(session_key));
-    let project_root = active_session
-        .map(|session_key| ctx.active_project_path(Some(session_key)))
-        .unwrap_or_else(|| ctx.workspace.root().to_path_buf());
+    let project_root = match active_session {
+        Some(_) => crate::tools::project::effective_project_root(ctx, args)?,
+        None => ctx.workspace.root().to_path_buf(),
+    };
     let history_workspace = Workspace::new(project_root)?;
     let requested_workspace_root = args.get("workspace_root").and_then(Value::as_str);
     if active_session.is_some() {
@@ -739,7 +760,15 @@ fn resolve_scope(ctx: &ToolContext, args: &Value) -> WorkspaceResult<(Workspace,
         active_session.is_none().then_some(requested_workspace_root).flatten(),
         args.get("history_dir").and_then(Value::as_str),
     )?;
+    ctx.register_managed_project_path(history_workspace.root(), &history_dir)?;
     Ok((history_workspace, history_dir))
+}
+
+fn history_project_id(workspace: &Workspace) -> String {
+    format!(
+        "sha256:{}",
+        storage::sha256(workspace.root_display().as_bytes())
+    )
 }
 
 fn validate_requested_scope_root(

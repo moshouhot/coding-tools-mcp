@@ -121,6 +121,7 @@ fn checkpoint_preserves_raw_input_and_superseding_revision_evidence() {
     let args = json!({
         "session_key": boot["session_key"],
         "expected_path": boot["current_path"],
+        "project_id": boot["project_id"],
         "turn_id": "turn-0001",
         "raw_user_input": "把历史按需读取，password=hunter2",
         "user_intent": "实现按需读取",
@@ -168,6 +169,7 @@ fn checkpoint_reports_missing_raw_user_input() {
         json!({
             "session_key": boot["session_key"],
             "expected_path": boot["current_path"],
+            "project_id": boot["project_id"],
             "turn_id": "missing-raw"
         }),
     );
@@ -463,8 +465,11 @@ fn history_tools_are_exposed_with_public_schemas() {
         .expect("checkpoint schema");
     assert_eq!(
         checkpoint["inputSchema"]["required"],
-        json!(["session_key", "expected_path"])
+        json!(["session_key", "expected_path", "project_id"])
     );
+    assert!(checkpoint["inputSchema"]["properties"]
+        .get("project_id")
+        .is_some());
     assert!(checkpoint["inputSchema"]["properties"]
         .get("raw_user_input")
         .is_some());
@@ -511,6 +516,7 @@ fn checkpoint_rejects_a_path_from_another_session() {
         json!({
             "session_key": first["session_key"],
             "expected_path": second["current_path"],
+            "project_id": first["project_id"],
             "turn_id": "wrong-target"
         }),
     );

@@ -21,18 +21,32 @@ pub struct Harness {
     workspace_root: PathBuf,
     workspace_id: String,
     store: HarnessStore,
+    ignored_paths: Vec<PathBuf>,
 }
 
 impl Harness {
     pub fn new(workspace_root: PathBuf, harness_root: PathBuf) -> HarnessResult<Self> {
+        Self::new_with_ignored_paths(workspace_root, harness_root, Vec::new())
+    }
+
+    pub fn new_with_ignored_paths(
+        workspace_root: PathBuf,
+        harness_root: PathBuf,
+        mut ignored_paths: Vec<PathBuf>,
+    ) -> HarnessResult<Self> {
         let workspace_root = workspace_root
             .canonicalize()
             .map_err(|e| HarnessError::new("WORKSPACE_UNAVAILABLE", e.to_string()))?;
+        let default_history = workspace_root.join("docs").join("history-session");
+        if !ignored_paths.iter().any(|path| path == &default_history) {
+            ignored_paths.push(default_history);
+        }
         let workspace_id = workspace_id(&workspace_root);
         Ok(Self {
             workspace_root,
             workspace_id,
             store: HarnessStore::new(harness_root)?,
+            ignored_paths,
         })
     }
 
@@ -61,7 +75,7 @@ impl Harness {
                 format!("工作区已有活动任务 {}", task.id),
             ));
         }
-        let baseline = capture_baseline(&self.workspace_root);
+        let baseline = self.capture_baseline();
         let now = timestamp();
         let task = TaskSession {
             id: Uuid::new_v4().simple().to_string(),
@@ -155,7 +169,7 @@ impl Harness {
 
     pub fn check_baseline(&self, task_id: &str) -> HarnessResult<()> {
         let task = self.task(task_id)?;
-        let current = capture_baseline(&self.workspace_root);
+        let current = self.capture_baseline();
         if current.branch != task.baseline.branch || current.head != task.baseline.head {
             return Err(HarnessError::new(
                 "BASELINE_STALE",
@@ -173,7 +187,7 @@ impl Harness {
 
     pub fn refresh_expected_state(&self, task_id: &str) -> HarnessResult<TaskSession> {
         let mut task = self.task(task_id)?;
-        task.expected_fingerprint = capture_baseline(&self.workspace_root).worktree_fingerprint;
+        task.expected_fingerprint = self.capture_baseline().worktree_fingerprint;
         task.updated_at = timestamp();
         self.store.save_task(&task)?;
         Ok(task)
@@ -256,7 +270,7 @@ impl Harness {
     }
 
     pub fn project_state(&self, max_files: usize) -> HarnessResult<ProjectState> {
-        let current = capture_baseline(&self.workspace_root);
+        let current = self.capture_baseline();
         let task = self.current_task()?;
         let baseline_map = task
             .as_ref()
@@ -325,7 +339,7 @@ impl Harness {
     }
 
     pub fn status(&self) -> HarnessResult<HarnessStatus> {
-        self.status_with_baseline(|| capture_baseline(&self.workspace_root))
+        self.status_with_baseline(|| self.capture_baseline())
     }
 
     fn status_with_baseline(
@@ -495,16 +509,28 @@ impl Harness {
             },
         )
     }
+
+    fn capture_baseline(&self) -> ProjectBaseline {
+        capture_baseline_with_ignored(&self.workspace_root, &self.ignored_paths)
+    }
 }
 
 pub fn capture_baseline(root: &Path) -> ProjectBaseline {
+    capture_baseline_with_ignored(root, &[])
+}
+
+fn capture_baseline_with_ignored(root: &Path, ignored_paths: &[PathBuf]) -> ProjectBaseline {
     let mut entries = Vec::new();
     // Prune skipped directories (OneDrive, node_modules, …) so WalkDir does not
     // descend into them — hashing alone is not enough for home-dir workspaces.
     for item in WalkDir::new(root)
         .follow_links(false)
         .into_iter()
-        .filter_entry(|entry| entry.path() == root || !should_skip(entry.path(), root))
+        .filter_entry(|entry| {
+            entry.path() == root
+                || (!should_skip(entry.path(), root)
+                    && !ignored_paths.iter().any(|ignored| entry.path().starts_with(ignored)))
+        })
         .filter_map(Result::ok)
     {
         let path = item.path();

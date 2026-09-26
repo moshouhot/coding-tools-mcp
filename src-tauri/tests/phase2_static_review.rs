@@ -1,6 +1,5 @@
 //! Isolated reproductions for the 2026-09-26 Phase 2 review.
-//! Pending design findings are ignored in normal runs, NOT accepted as fixed.
-//! Run them explicitly with: cargo test --test phase2_static_review pending_ -- --ignored --nocapture
+//! Review findings are permanent regression gates after approval/remediation.
 
 use std::fs;
 use std::path::PathBuf;
@@ -12,6 +11,53 @@ struct Fixture {
     ctx: ToolContext,
     pool: PathBuf,
     _temp: tempfile::TempDir,
+}
+
+#[test]
+fn custom_history_directory_is_excluded_from_harness_baseline() {
+    let f = Fixture::new();
+    f.bind("alpha");
+    let target = ok(f.call(
+        "history_session_bootstrap",
+        json!({
+            "initial_user_input": "INITIAL",
+            "history_dir": ".ai/session-history"
+        }),
+    ));
+    ok(f.call("start_task", json!({"objective": "project work"})));
+    ok(f.call(
+        "history_session_checkpoint",
+        json!({
+            "session_key": target["session_key"],
+            "expected_path": target["current_path"],
+            "project_id": target["project_id"],
+            "history_dir": ".ai/session-history",
+            "raw_user_input": "save custom history"
+        }),
+    ));
+    let result = f.call("exec_command", json!({"cmd": "pwd"}));
+    assert_eq!(result["ok"], true, "{result}");
+}
+
+#[test]
+fn real_external_code_change_is_still_blocked_after_history_checkpoint() {
+    let f = Fixture::new();
+    f.bind("alpha");
+    let target = f.bootstrap("INITIAL");
+    ok(f.call("start_task", json!({"objective": "project work"})));
+    ok(f.call(
+        "history_session_checkpoint",
+        json!({
+            "session_key": target["session_key"],
+            "expected_path": target["current_path"],
+            "project_id": target["project_id"],
+            "raw_user_input": "save ordinary progress"
+        }),
+    ));
+    fs::write(f.pool.join("alpha/name.txt"), "externally changed").unwrap();
+    let result = f.call("exec_command", json!({"cmd": "pwd"}));
+    assert_eq!(result["ok"], false, "{result}");
+    assert_eq!(result["error"]["code"], "FILE_CHANGED_EXTERNALLY");
 }
 
 impl Fixture {
@@ -220,8 +266,7 @@ fn scoped_patch_keeps_parent_traversal_rejected() {
 }
 
 #[test]
-#[ignore = "P1-HISTORY-TARGET: stable archive identity / switch lifecycle requires approval"]
-fn pending_old_checkpoint_must_not_silently_write_to_another_project() {
+fn old_checkpoint_is_rejected_after_project_switch() {
     let f = Fixture::new();
     f.bind("alpha");
     let old_target = f.bootstrap("ALPHA-INITIAL");
@@ -229,6 +274,7 @@ fn pending_old_checkpoint_must_not_silently_write_to_another_project() {
     let new_target = f.bootstrap("BETA-INITIAL");
     assert_eq!(old_target["session_key"], new_target["session_key"]);
     assert_eq!(old_target["current_path"], new_target["current_path"]);
+    assert_ne!(old_target["project_id"], new_target["project_id"]);
     let beta_path = f.pool.join("beta/docs/history-session/1.md");
     let before = fs::read(&beta_path).unwrap();
     let result = f.call(
@@ -236,19 +282,17 @@ fn pending_old_checkpoint_must_not_silently_write_to_another_project() {
         json!({
             "session_key": old_target["session_key"],
             "expected_path": old_target["current_path"],
+            "project_id": old_target["project_id"],
             "raw_user_input": "DELAYED-ALPHA-CHECKPOINT"
         }),
     );
-    eprintln!("P1-HISTORY-TARGET: {result}");
-    assert!(
-        fs::read(&beta_path).unwrap() == before,
-        "stale Alpha target silently modified Beta history"
-    );
+    assert_eq!(result["ok"], false, "{result}");
+    assert_eq!(result["error"]["code"], "SESSION_PROJECT_MISMATCH");
+    assert_eq!(fs::read(&beta_path).unwrap(), before);
 }
 
 #[test]
-#[ignore = "P1-HISTORY-BASELINE: managed metadata / Harness baseline policy requires approval"]
-fn pending_history_checkpoint_must_not_block_next_project_command() {
+fn history_checkpoint_does_not_block_next_project_command() {
     let f = Fixture::new();
     f.bind("alpha");
     let target = f.bootstrap("INITIAL");
@@ -258,11 +302,11 @@ fn pending_history_checkpoint_must_not_block_next_project_command() {
         json!({
             "session_key": target["session_key"],
             "expected_path": target["current_path"],
+            "project_id": target["project_id"],
             "raw_user_input": "save ordinary progress"
         }),
     ));
     let result = f.call("exec_command", json!({"cmd": "pwd"}));
-    eprintln!("P1-HISTORY-BASELINE: {result}");
     assert_eq!(
         result["ok"], true,
         "our own History write invalidated the project task"
@@ -270,21 +314,216 @@ fn pending_history_checkpoint_must_not_block_next_project_command() {
 }
 
 #[test]
-#[ignore = "P1-BINDING-LOSS: inherited FIFO/fallback semantics require approval"]
-fn pending_evicted_binding_must_not_silently_read_a_different_project() {
+fn many_other_sessions_do_not_evict_existing_project_binding() {
     let f = Fixture::new();
     f.bind("alpha");
     let beta = f.pool.join("beta").canonicalize().unwrap();
     f.ctx.set_default_cwd(beta.clone());
-    for index in 0..256 {
+    for index in 0..512 {
         f.ctx
-            .set_session_active_project(&format!("other-chat-{index}"), beta.clone());
+            .set_session_active_project(&format!("other-chat-{index}"), beta.clone())
+            .expect("persist other binding");
     }
     let state = f.call("get_active_project", json!({}));
     let result = f.call("read_file", json!({"path": "name.txt"}));
-    eprintln!("P1-BINDING-LOSS state: {state}; read: {result}");
-    assert!(
-        result["ok"] == false || result["content"] == "alpha",
-        "expired Alpha binding silently read Beta"
+    assert_eq!(state["source"], "session", "{state}");
+    assert_eq!(state["active_project"], "alpha", "{state}");
+    assert_eq!(result["content"], "alpha", "{result}");
+}
+
+#[test]
+fn active_project_binding_survives_context_recreation() {
+    let temp = tempfile::tempdir().expect("isolated fixture");
+    let pool = temp.path().join("pool");
+    let harness = temp.path().join("harness");
+    fs::create_dir_all(pool.join("alpha")).unwrap();
+    fs::write(pool.join("alpha/name.txt"), "alpha").unwrap();
+
+    {
+        let ctx = ToolContext::for_test(pool.clone(), harness.clone()).unwrap();
+        ok(call_tool(
+            &ctx,
+            "set_active_project",
+            &json!({"path": "alpha", "_host_session_key": "persist-chat"}),
+        ));
+    }
+
+    let ctx = ToolContext::for_test(pool.clone(), harness).unwrap();
+    let state = ok(call_tool(
+        &ctx,
+        "get_active_project",
+        &json!({"_host_session_key": "persist-chat"}),
+    ));
+    assert_eq!(state["source"], "session");
+    assert_eq!(state["active_project"], "alpha");
+    let read = ok(call_tool(
+        &ctx,
+        "read_file",
+        &json!({"path": "name.txt", "_host_session_key": "persist-chat"}),
+    ));
+    assert_eq!(read["content"], "alpha");
+}
+
+#[test]
+fn active_project_binding_recovers_from_backup_state_file() {
+    let temp = tempfile::tempdir().expect("isolated fixture");
+    let pool = temp.path().join("pool");
+    let harness = temp.path().join("harness");
+    fs::create_dir_all(pool.join("alpha")).unwrap();
+    fs::write(pool.join("alpha/name.txt"), "alpha").unwrap();
+
+    {
+        let ctx = ToolContext::for_test(pool.clone(), harness.clone()).unwrap();
+        ok(call_tool(
+            &ctx,
+            "set_active_project",
+            &json!({"path": "alpha", "_host_session_key": "persist-chat"}),
+        ));
+    }
+    let state_dir = harness.join("active-project-sessions");
+    let state_file = fs::read_dir(&state_dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .expect("active-project state file");
+    let backup = state_file.with_extension("json.bak");
+    fs::rename(&state_file, &backup).unwrap();
+
+    let ctx = ToolContext::for_test(pool, harness).unwrap();
+    let state = ok(call_tool(
+        &ctx,
+        "get_active_project",
+        &json!({"_host_session_key": "persist-chat"}),
+    ));
+    assert_eq!(state["source"], "session");
+    assert_eq!(state["active_project"], "alpha");
+}
+
+#[test]
+fn corrupt_binding_store_fails_closed_for_unrebound_sessions() {
+    let temp = tempfile::tempdir().expect("isolated fixture");
+    let pool = temp.path().join("pool");
+    let harness = temp.path().join("harness");
+    fs::create_dir_all(pool.join("alpha")).unwrap();
+    fs::create_dir_all(pool.join("beta")).unwrap();
+
+    {
+        let ctx = ToolContext::for_test(pool.clone(), harness.clone()).unwrap();
+        ok(call_tool(
+            &ctx,
+            "set_active_project",
+            &json!({"path": "alpha", "_host_session_key": "old-chat"}),
+        ));
+    }
+    let state_dir = harness.join("active-project-sessions");
+    let state_file = fs::read_dir(&state_dir)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .expect("active-project state file");
+    fs::write(&state_file, b"{ definitely not valid json").unwrap();
+
+    let ctx = ToolContext::for_test(pool, harness).unwrap();
+    let before_rebind = call_tool(
+        &ctx,
+        "get_active_project",
+        &json!({"_host_session_key": "old-chat"}),
     );
+    assert_eq!(before_rebind["ok"], false, "{before_rebind}");
+    assert_eq!(
+        before_rebind["error"]["code"],
+        "ACTIVE_PROJECT_STORE_UNAVAILABLE"
+    );
+
+    ok(call_tool(
+        &ctx,
+        "set_active_project",
+        &json!({"path": "beta", "_host_session_key": "repair-chat"}),
+    ));
+    let repaired = ok(call_tool(
+        &ctx,
+        "get_active_project",
+        &json!({"_host_session_key": "repair-chat"}),
+    ));
+    assert_eq!(repaired["active_project"], "beta");
+
+    let still_closed = call_tool(
+        &ctx,
+        "get_active_project",
+        &json!({"_host_session_key": "old-chat"}),
+    );
+    assert_eq!(still_closed["ok"], false, "{still_closed}");
+    assert_eq!(
+        still_closed["error"]["code"],
+        "ACTIVE_PROJECT_STORE_UNAVAILABLE"
+    );
+}
+
+#[test]
+fn custom_history_exclusion_survives_context_recreation() {
+    let temp = tempfile::tempdir().expect("isolated fixture");
+    let pool = temp.path().join("pool");
+    let harness = temp.path().join("harness");
+    fs::create_dir_all(pool.join("alpha")).unwrap();
+    fs::write(pool.join("alpha/name.txt"), "alpha").unwrap();
+
+    {
+        let ctx = ToolContext::for_test(pool.clone(), harness.clone()).unwrap();
+        ok(call_tool(
+            &ctx,
+            "set_active_project",
+            &json!({"path": "alpha", "_host_session_key": "persist-chat"}),
+        ));
+        let boot = ok(call_tool(
+            &ctx,
+            "history_session_bootstrap",
+            &json!({
+                "initial_user_input": "INITIAL",
+                "history_dir": ".ai/session-history",
+                "_host_session_key": "persist-chat"
+            }),
+        ));
+        ok(call_tool(
+            &ctx,
+            "start_task",
+            &json!({"objective": "project work", "_host_session_key": "persist-chat"}),
+        ));
+        ok(call_tool(
+            &ctx,
+            "history_session_checkpoint",
+            &json!({
+                "session_key": boot["session_key"],
+                "expected_path": boot["current_path"],
+                "project_id": boot["project_id"],
+                "history_dir": ".ai/session-history",
+                "raw_user_input": "save custom history",
+                "_host_session_key": "persist-chat"
+            }),
+        ));
+    }
+
+    let ctx = ToolContext::for_test(pool, harness).unwrap();
+    let result = call_tool(
+        &ctx,
+        "exec_command",
+        &json!({"cmd": "pwd", "_host_session_key": "persist-chat"}),
+    );
+    assert_eq!(result["ok"], true, "{result}");
+}
+
+#[test]
+fn missing_bound_project_fails_closed_until_explicit_rebind() {
+    let f = Fixture::new();
+    f.bind("alpha");
+    fs::rename(f.pool.join("alpha"), f.pool.join("renamed-alpha")).unwrap();
+
+    let read = f.call("read_file", json!({"path": "name.txt"}));
+    assert_eq!(read["ok"], false, "{read}");
+    assert_eq!(read["error"]["code"], "ACTIVE_PROJECT_UNAVAILABLE");
+
+    ok(f.call("set_active_project", json!({"path": "beta"})));
+    let recovered = ok(f.call("read_file", json!({"path": "name.txt"})));
+    assert_eq!(recovered["content"], "beta");
 }

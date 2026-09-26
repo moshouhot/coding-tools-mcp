@@ -68,7 +68,7 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 
 Active Project 按宿主会话隔离，所以多个 Codex 对话可以通过同一个 Connector 同时操作不同项目；用户明确给出的项目目录不要求存在 `.git`、`package.json` 或 `Cargo.toml`。只有在用户仅提供项目名而没有路径时，AI 才需要调用 `discover_projects` 辅助查找并在唯一匹配时自动绑定。
 
-> `0.2.4-custom.4` 起，History / Harness 也会在 Session Active Project 已绑定时按项目下沉：History 默认写入该项目自己的 `docs/history-session`，Harness Task / baseline / operation log 使用该项目根生成独立 identity。没有 Session Active Project 时仍保留 Workspace Pool 级 fallback，旧数据不会被自动迁移或改写。
+> `0.2.4-custom.5` 起，History / Harness 会在 Session Active Project 已绑定时按项目下沉：History 默认写入该项目自己的 `docs/history-session`，checkpoint 同时校验项目 identity；Harness Task / baseline / operation log 使用项目根生成独立 identity，并排除 Coding Tools MCP 自己维护的 History 目录。Session → Active Project 绑定会在本机持久化，程序重启后恢复；已绑定项目失效时明确报错，绝不静默 fallback 到另一个项目。没有 Session Active Project 时仍保留 Workspace Pool 级 fallback，旧数据不会被自动迁移或改写。
 
 ### 3. 配置公网隧道
 
