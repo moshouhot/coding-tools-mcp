@@ -86,7 +86,7 @@ fn initialize_result() -> Value {
             "title": "Coding Tools MCP",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "Use these tools only for local coding operations inside the configured workspace. The configured workspace may be a pool containing many independent projects. When the user's request explicitly identifies a directory inside the workspace as the project, repository, repo, codebase, work tree, or clearly makes that directory the primary coding target, automatically call set_active_project with that directory before project work. The user's explicit directory designation is authoritative; do not require .git, package.json, Cargo.toml, or other project markers and do not ask for confirmation. Reuse the active project for later requests in the same conversation. Do not switch active project merely because the user incidentally references another file or directory. If the user names a project without a path, use discover_projects and auto-bind only when the match is unique. Active Project is scoped to the host conversation, so other conversations may work in other projects through the same connector. At the start of every new ChatGPT conversation, before answering the user's first request, call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence."
+        "instructions": "Use these tools only for local coding operations inside the configured workspace. The configured workspace may be a pool containing many independent projects. When the user's request explicitly identifies a directory inside the workspace as the project, repository, repo, codebase, work tree, or clearly makes that directory the primary coding target, automatically call set_active_project with that directory before any project-scoped initialization or project work. The user's explicit directory designation is authoritative; do not require .git, package.json, Cargo.toml, or other project markers and do not ask for confirmation. Reuse the active project for later requests in the same conversation. Do not switch active project merely because the user incidentally references another file or directory. If the user names a project without a path, use discover_projects and auto-bind only when the match is unique. Active Project is scoped to the host conversation, so other conversations may work in other projects through the same connector. History and Harness are project-aware when a Session Active Project exists; otherwise they retain the workspace-level fallback. At the start of every new ChatGPT conversation, before answering the user's first request, initialize project context first when the first request identifies a project, then call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive under the active project when one is bound, and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence."
     })
 }
 
@@ -230,6 +230,7 @@ mod tests {
         assert!(instructions.contains("set_active_project"));
         assert!(instructions.contains("discover_projects"));
         assert!(instructions.contains("Active Project is scoped to the host conversation"));
+        assert!(instructions.contains("History and Harness are project-aware"));
         assert!(instructions.contains("do not ask for confirmation"));
         assert!(instructions.contains("raw_user_input"));
         assert!(instructions.contains("history_session_search"));
@@ -241,6 +242,13 @@ mod tests {
         assert!(instructions.contains("before the final response"));
         assert!(instructions.contains("checkpoint returns ok=true"));
         assert!(instructions.contains("not automatic background persistence"));
+        let bind_position = instructions
+            .find("initialize project context first")
+            .expect("project binding order");
+        let bootstrap_position = instructions
+            .find("then call history_session_bootstrap")
+            .expect("bootstrap order");
+        assert!(bind_position < bootstrap_position);
     }
 
     #[test]
@@ -261,6 +269,12 @@ mod tests {
         assert!(component.contains("raw_user_input"));
         assert!(component.contains("history_session_search"));
         assert!(component.contains("history_session_checkpoint"));
+        assert!(component.contains("后续相对路径、History 和 Harness 都继续使用当前项目"));
+        let bind_position = component.find("set_active_project").expect("set active project");
+        let bootstrap_position = component
+            .find("history_session_bootstrap")
+            .expect("history bootstrap");
+        assert!(bind_position < bootstrap_position);
         assert!(!component.contains("打开连接器设置"));
     }
 

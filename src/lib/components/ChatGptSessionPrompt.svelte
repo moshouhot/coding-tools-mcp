@@ -3,8 +3,7 @@
   import { onDestroy } from "svelte";
   import { showToast } from "$lib/stores/toast";
 
-  const sessionPrompt = `请初始化或恢复当前项目会话，先调用 history_session_bootstrap，并把我的首次请求逐字传入 initial_user_input。
-如果我明确把当前 Workspace 内某个目录称为项目、repo、代码库、工程，或明显把该目录作为本轮主要开发对象，请自动调用 set_active_project 将它绑定为当前对话的当前项目，不要要求我手工选择，也不要要求该目录必须存在 .git、package.json、Cargo.toml 等项目标记。后续相对路径继续使用当前项目；仅引用其他文件或目录时不要误切项目。若我只给项目名而没有路径，可调用 discover_projects，只有唯一匹配时才自动切换。
+  const sessionPrompt = `请初始化或恢复当前项目会话。如果我的首次请求明确把当前 Workspace 内某个目录称为项目、repo、代码库、工程，或明显把该目录作为本轮主要开发对象，请先调用 set_active_project 将它绑定为当前对话的当前项目，再调用 history_session_bootstrap，并把我的首次请求逐字传入 initial_user_input。不要要求我手工选择，也不要要求该目录必须存在 .git、package.json、Cargo.toml 等项目标记。后续相对路径、History 和 Harness 都继续使用当前项目；仅引用其他文件或目录时不要误切项目。若我只给项目名而没有路径，可调用 discover_projects，只有唯一匹配时才自动切换。
 如果没有历史记录，则创建首个 history-session；如果已有历史记录，先阅读返回的有界 state。
 需要早期精确细节时，先调用 history_session_search，再用 history_session_read 分页读取相关原始 Markdown，并根据 next_cursor 继续直到完成；不要要求 bootstrap 返回全部历史。
 本会话每轮任务完成后调用 history_session_checkpoint，并原样传入 bootstrap 返回的 session_key 和 current_path，以及我本轮请求的逐字 raw_user_input。

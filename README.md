@@ -68,7 +68,7 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 
 Active Project 按宿主会话隔离，所以多个 Codex 对话可以通过同一个 Connector 同时操作不同项目；用户明确给出的项目目录不要求存在 `.git`、`package.json` 或 `Cargo.toml`。只有在用户仅提供项目名而没有路径时，AI 才需要调用 `discover_projects` 辅助查找并在唯一匹配时自动绑定。
 
-> 当前 Active Project MVP 已覆盖文件、Exec、Git、Patch 和项目根灾难性删除保护；History / Harness 仍以 Workspace Pool 为身份边界，后续版本再做项目级下沉。
+> `0.2.4-custom.4` 起，History / Harness 也会在 Session Active Project 已绑定时按项目下沉：History 默认写入该项目自己的 `docs/history-session`，Harness Task / baseline / operation log 使用该项目根生成独立 identity。没有 Session Active Project 时仍保留 Workspace Pool 级 fallback，旧数据不会被自动迁移或改写。
 
 ### 3. 配置公网隧道
 

@@ -64,24 +64,32 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
         return policy_tool_err(e);
     }
 
+    let harness = match ctx.harness_for_session(project::host_session_key(&effective_args)) {
+        Ok(harness) => harness,
+        Err(error) => {
+            return tool_err_code(error.code(), error.to_string(), "permission");
+        }
+    };
+
     if crate::harness::tools::TOOL_NAMES.contains(&name) {
-        return match crate::harness::tools::call(ctx, name, args) {
+        return match crate::harness::tools::call(&harness, name, args) {
             Ok(value) => value,
-            Err(error) => attach_harness_status(ctx, tool_err(error), false),
+            Err(error) => attach_harness_status(ctx, &harness, tool_err(error), false),
         };
     }
 
     let task_id = if requires_write_baseline(name, &effective_args) {
-        let task = ctx.harness.current_task().ok().flatten();
+        let task = harness.current_task().ok().flatten();
         if let Some(task) = task {
-            if let Err(error) = ctx.harness.check_baseline(&task.id) {
+            if let Err(error) = harness.check_baseline(&task.id) {
                 return attach_harness_status(
                     ctx,
+                    &harness,
                     tool_err_code(error.code(), error.to_string(), "permission"),
                     false,
                 );
             }
-            let _ = ctx.harness.record_event(
+            let _ = harness.record_event(
                 &task.id,
                 "operation_started",
                 Some(name),
@@ -97,7 +105,7 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
     };
 
     let operation = if should_log_operation(name) {
-        ctx.harness
+        harness
             .record_operation(
                 None,
                 task_id.as_deref(),
@@ -206,11 +214,11 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
         }
     }
     if output.get("ok").and_then(Value::as_bool) == Some(false) {
-        output = attach_harness_status(ctx, output, task_id.is_none());
+        output = attach_harness_status(ctx, &harness, output, task_id.is_none());
     }
     if let Some(task_id) = task_id.as_deref() {
         let succeeded = output.get("ok").and_then(Value::as_bool) == Some(true);
-        let _ = ctx.harness.record_event(
+        let _ = harness.record_event(
             task_id,
             "operation_finished",
             Some(name),
@@ -218,12 +226,12 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
             json!({"ok": succeeded, "tool": name}),
         );
         if succeeded {
-            let _ = ctx.harness.refresh_expected_state(task_id);
+            let _ = harness.refresh_expected_state(task_id);
         }
     }
     if let Some(operation) = operation {
         let succeeded = output.get("ok").and_then(Value::as_bool) == Some(true);
-        let _ = ctx.harness.record_operation(
+        let _ = harness.record_operation(
             Some(&operation.id),
             task_id.as_deref(),
             name,
@@ -411,8 +419,13 @@ fn operation_input(args: &Value) -> Value {
     })
 }
 
-fn attach_harness_status(ctx: &ToolContext, mut output: Value, standalone: bool) -> Value {
-    if let Ok(mut status) = ctx.harness.status() {
+fn attach_harness_status(
+    ctx: &ToolContext,
+    harness: &crate::harness::Harness,
+    mut output: Value,
+    standalone: bool,
+) -> Value {
+    if let Ok(mut status) = harness.status() {
         if standalone && status.task_id.is_none() {
             status.next_actions.clear();
         }

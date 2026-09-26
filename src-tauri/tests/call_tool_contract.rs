@@ -226,6 +226,221 @@ fn active_project_is_isolated_per_host_session_and_accepts_absolute_paths() {
 }
 
 #[test]
+fn history_archives_follow_session_active_project_and_remain_isolated() {
+    let temp = tempfile::tempdir().expect("创建 Workspace Pool");
+    let root = temp.path();
+    let project_a = root.join("project-a");
+    let project_b = root.join("project-b");
+    fs::create_dir_all(&project_a).expect("创建 project-a");
+    fs::create_dir_all(&project_b).expect("创建 project-b");
+    let ctx = ctx_for(root);
+
+    assert_ok(&invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "project-a", "_host_session_key": "session-a"}),
+    ));
+    assert_ok(&invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "project-b", "_host_session_key": "session-b"}),
+    ));
+
+    let boot_a = invoke(
+        &ctx,
+        "history_session_bootstrap",
+        json!({
+            "workspace_root": root.display().to_string(),
+            "initial_user_input": "PROJECT_A_FIRST",
+            "_host_session_key": "session-a"
+        }),
+    );
+    let boot_a = assert_ok(&boot_a);
+    assert_eq!(boot_a["history_scope"], "active_project");
+    assert_eq!(boot_a["current_number"], 1);
+    assert_eq!(boot_a["current_path"], "docs/history-session/1.md");
+    assert!(boot_a["project_root"]
+        .as_str()
+        .unwrap_or("")
+        .contains("project-a"));
+
+    let boot_b = invoke(
+        &ctx,
+        "history_session_bootstrap",
+        json!({
+            "workspace_root": root.display().to_string(),
+            "initial_user_input": "PROJECT_B_FIRST",
+            "_host_session_key": "session-b"
+        }),
+    );
+    let boot_b = assert_ok(&boot_b);
+    assert_eq!(boot_b["history_scope"], "active_project");
+    assert_eq!(boot_b["current_number"], 1);
+    assert_eq!(boot_b["current_path"], "docs/history-session/1.md");
+    assert!(boot_b["project_root"]
+        .as_str()
+        .unwrap_or("")
+        .contains("project-b"));
+
+    assert_ok(&invoke(
+        &ctx,
+        "history_session_checkpoint",
+        json!({
+            "session_key": "session-a",
+            "expected_path": "docs/history-session/1.md",
+            "raw_user_input": "PROJECT_A_NEXT",
+            "_host_session_key": "session-a"
+        }),
+    ));
+    assert_ok(&invoke(
+        &ctx,
+        "history_session_checkpoint",
+        json!({
+            "session_key": "session-b",
+            "expected_path": "docs/history-session/1.md",
+            "raw_user_input": "PROJECT_B_NEXT",
+            "_host_session_key": "session-b"
+        }),
+    ));
+
+    let history_a = fs::read_to_string(project_a.join("docs/history-session/1.md"))
+        .expect("读取 project-a history");
+    let history_b = fs::read_to_string(project_b.join("docs/history-session/1.md"))
+        .expect("读取 project-b history");
+    assert!(history_a.contains("PROJECT_A_FIRST"));
+    assert!(history_a.contains("PROJECT_A_NEXT"));
+    assert!(!history_a.contains("PROJECT_B_FIRST"));
+    assert!(history_b.contains("PROJECT_B_FIRST"));
+    assert!(history_b.contains("PROJECT_B_NEXT"));
+    assert!(!history_b.contains("PROJECT_A_FIRST"));
+    assert!(!root.join("docs/history-session").exists());
+}
+
+#[test]
+fn harness_tasks_are_scoped_to_active_project_identity() {
+    let temp = tempfile::tempdir().expect("创建 Workspace Pool");
+    let root = temp.path();
+    fs::create_dir_all(root.join("project-a")).expect("创建 project-a");
+    fs::create_dir_all(root.join("project-b")).expect("创建 project-b");
+    fs::write(root.join("project-a/a.txt"), "A\n").expect("写 project-a");
+    fs::write(root.join("project-b/b.txt"), "B\n").expect("写 project-b");
+    let ctx = ctx_for(root);
+
+    assert_ok(&invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "project-a", "_host_session_key": "session-a"}),
+    ));
+    assert_ok(&invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "project-b", "_host_session_key": "session-b"}),
+    ));
+
+    let start_a = invoke(
+        &ctx,
+        "start_task",
+        json!({"objective": "task-a", "_host_session_key": "session-a"}),
+    );
+    let task_a = assert_ok(&start_a)["task"].clone();
+    let start_b = invoke(
+        &ctx,
+        "start_task",
+        json!({"objective": "task-b", "_host_session_key": "session-b"}),
+    );
+    let task_b = assert_ok(&start_b)["task"].clone();
+
+    assert_ne!(task_a["workspace_id"], task_b["workspace_id"]);
+    assert_ne!(task_a["id"], task_b["id"]);
+
+    let status_a = invoke(
+        &ctx,
+        "harness_status",
+        json!({"_host_session_key": "session-a"}),
+    );
+    let status_b = invoke(
+        &ctx,
+        "harness_status",
+        json!({"_host_session_key": "session-b"}),
+    );
+    assert_eq!(assert_ok(&status_a)["task_id"], task_a["id"]);
+    assert_eq!(assert_ok(&status_b)["task_id"], task_b["id"]);
+
+    assert_ok(&invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "project-b", "_host_session_key": "session-a"}),
+    ));
+    let switched = invoke(
+        &ctx,
+        "harness_status",
+        json!({"_host_session_key": "session-a"}),
+    );
+    assert_eq!(assert_ok(&switched)["task_id"], task_b["id"]);
+
+    assert_ok(&invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "project-a", "_host_session_key": "session-a"}),
+    ));
+    let restored = invoke(
+        &ctx,
+        "harness_status",
+        json!({"_host_session_key": "session-a"}),
+    );
+    assert_eq!(assert_ok(&restored)["task_id"], task_a["id"]);
+}
+
+#[test]
+fn harness_operation_log_follows_session_active_project() {
+    let temp = tempfile::tempdir().expect("创建 Workspace Pool");
+    let root = temp.path();
+    fs::create_dir_all(root.join("project-a")).expect("创建 project-a");
+    fs::create_dir_all(root.join("project-b")).expect("创建 project-b");
+    let ctx = ctx_for(root);
+
+    assert_ok(&invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "project-a", "_host_session_key": "session-a"}),
+    ));
+    assert_ok(&invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "project-b", "_host_session_key": "session-b"}),
+    ));
+
+    assert_ok(&invoke(
+        &ctx,
+        "exec_command",
+        json!({"cmd": "pwd", "_host_session_key": "session-a"}),
+    ));
+    assert_ok(&invoke(
+        &ctx,
+        "exec_command",
+        json!({"cmd": "pwd", "_host_session_key": "session-b"}),
+    ));
+
+    let log_a = invoke(
+        &ctx,
+        "operation_log",
+        json!({"_host_session_key": "session-a"}),
+    );
+    let log_b = invoke(
+        &ctx,
+        "operation_log",
+        json!({"_host_session_key": "session-b"}),
+    );
+    let operations_a = assert_ok(&log_a)["operations"].as_array().unwrap();
+    let operations_b = assert_ok(&log_b)["operations"].as_array().unwrap();
+    assert!(!operations_a.is_empty());
+    assert!(!operations_b.is_empty());
+    assert!(operations_a.iter().all(|operation| operation["tool"] == "exec_command"));
+    assert!(operations_b.iter().all(|operation| operation["tool"] == "exec_command"));
+    assert_ne!(operations_a[0]["workspace_id"], operations_b[0]["workspace_id"]);
+}
+
+#[test]
 fn active_project_rejects_absolute_paths_outside_workspace_pool() {
     let pool = tempfile::tempdir().expect("创建 Workspace Pool");
     let outside = tempfile::tempdir().expect("创建外部目录");

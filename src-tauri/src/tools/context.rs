@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::audit::AuditStore;
-use crate::harness::Harness;
+use crate::harness::{Harness, HarnessResult};
 use crate::tools::policy::PolicySettings;
 use crate::tools::session::SessionStore;
 use crate::tools::workspace::{relative_display, Workspace};
@@ -204,6 +204,21 @@ impl ToolContext {
             .lock()
             .expect("active project lock")
             .insert(session_key.to_string(), path);
+    }
+
+    pub fn harness_for_session(&self, session_key: Option<&str>) -> HarnessResult<Harness> {
+        let Some(session_key) = session_key
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .filter(|value| self.has_session_active_project(value))
+        else {
+            return Ok(self.harness.clone());
+        };
+        let project_root = self.active_project_path(Some(session_key));
+        if project_root == self.workspace.root() {
+            return Ok(self.harness.clone());
+        }
+        Harness::new(project_root, self.harness.store_root().to_path_buf())
     }
 
     pub fn audit_store(&self) -> Option<AuditStore> {

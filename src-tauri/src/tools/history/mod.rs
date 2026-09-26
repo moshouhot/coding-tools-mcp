@@ -3,12 +3,13 @@ mod model;
 mod storage;
 
 use std::fs;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
 use crate::tools::context::ToolContext;
-use crate::tools::workspace::{tool_ok, WorkspaceError, WorkspaceResult};
+use crate::tools::workspace::{tool_ok, Workspace, WorkspaceError, WorkspaceResult};
 
 use self::model::{InitialInputRecord, SearchHit};
 
@@ -20,10 +21,10 @@ const MAX_READ_MAX_BYTES: usize = 64 * 1024;
 
 pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let (session_key, source) = resolve_session_key(args)?;
-    let history_dir = resolve_dir(ctx, args)?;
+    let (history_workspace, history_dir) = resolve_scope(ctx, args)?;
     storage::ensure_directory(&history_dir)?;
     let _lock = storage::lock_directory(&history_dir)?;
-    let report = storage::scan(&ctx.workspace, &history_dir)?;
+    let report = storage::scan(&history_workspace, &history_dir)?;
     reject_ambiguous_history(&report)?;
     if !report.missing_numbers.is_empty() {
         return Err(history_error(
@@ -104,7 +105,10 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
                 ));
             }
             let number = report.latest_number().unwrap_or(0) + 1;
-            let relative_path = format!("{}/{number}.md", history_dir_display(ctx, &history_dir));
+            let relative_path = format!(
+                "{}/{number}.md",
+                history_dir_display(&history_workspace, &history_dir)
+            );
             let timestamp = now_timestamp();
             let title = args
                 .get("title")
@@ -140,7 +144,7 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
             (number, relative_path, true, false, initial_input.is_some())
         };
 
-    let refreshed = storage::scan(&ctx.workspace, &history_dir)?;
+    let refreshed = storage::scan(&history_workspace, &history_dir)?;
     reject_ambiguous_history(&refreshed)?;
     let manifest = storage::build_manifest(&refreshed);
     let previous_state_revision = storage::read_state(&history_dir)
@@ -177,6 +181,8 @@ pub fn bootstrap(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         "state": state,
         "history_read_mode": "bounded_state_with_on_demand_search_and_read",
         "persistence_mode": "model_mediated_tool_calls",
+        "project_root": history_workspace.root_display(),
+        "history_scope": if history_workspace.root() == ctx.workspace.root() { "workspace" } else { "active_project" },
         "assistant_instructions": "Use the bounded state to begin work. To recover exact earlier context, call history_session_search and then history_session_read for only the relevant archive. Preserve session_key and current_path. Before the final response for each user task, call history_session_checkpoint with the user's verbatim raw_user_input. The server can only save text passed as tool arguments and reports missing input explicitly.",
         "required_next_actions": [
             "review_bounded_state",
@@ -210,12 +216,12 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let host_session_key_mismatch = host_session_key(args)
         .map(|host| host != session_key.as_str())
         .unwrap_or(false);
-    let history_dir = resolve_dir(ctx, args)?;
+    let (history_workspace, history_dir) = resolve_scope(ctx, args)?;
     if !history_dir.exists() {
         return Err(session_not_bootstrapped());
     }
     let _lock = storage::lock_directory(&history_dir)?;
-    let report = storage::scan(&ctx.workspace, &history_dir)?;
+    let report = storage::scan(&history_workspace, &history_dir)?;
     reject_ambiguous_history(&report)?;
     let document = report
         .documents
@@ -272,7 +278,7 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
         )?;
     }
 
-    let refreshed = storage::scan(&ctx.workspace, &history_dir)?;
+    let refreshed = storage::scan(&history_workspace, &history_dir)?;
     let manifest = storage::build_manifest(&refreshed);
     let state_revision = storage::read_state(&history_dir)
         .ok()
@@ -324,8 +330,8 @@ pub fn checkpoint(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
 }
 
 pub fn search(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
-    let history_dir = resolve_dir(ctx, args)?;
-    let report = storage::scan(&ctx.workspace, &history_dir)?;
+    let (history_workspace, history_dir) = resolve_scope(ctx, args)?;
+    let report = storage::scan(&history_workspace, &history_dir)?;
     let manifest = storage::read_manifest(&history_dir)
         .ok()
         .flatten()
@@ -390,8 +396,8 @@ pub fn search(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
 }
 
 pub fn read(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
-    let history_dir = resolve_dir(ctx, args)?;
-    let report = storage::scan(&ctx.workspace, &history_dir)?;
+    let (history_workspace, history_dir) = resolve_scope(ctx, args)?;
+    let report = storage::scan(&history_workspace, &history_dir)?;
     let document = if let Some(number) = args.get("number").and_then(Value::as_u64) {
         report
             .documents
@@ -467,7 +473,7 @@ pub fn read(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
 }
 
 pub fn validate(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
-    let history_dir = resolve_dir(ctx, args)?;
+    let (history_workspace, history_dir) = resolve_scope(ctx, args)?;
     let repair = args.get("repair").and_then(Value::as_bool).unwrap_or(false);
     if repair {
         storage::ensure_directory(&history_dir)?;
@@ -475,14 +481,14 @@ pub fn validate(ctx: &ToolContext, args: &Value) -> WorkspaceResult<Value> {
     let index_status = derived_status(storage::read_index(&history_dir));
     let manifest_status = derived_status(storage::read_manifest(&history_dir));
     let state_status = derived_status(storage::read_state(&history_dir));
-    let report = storage::scan(&ctx.workspace, &history_dir)?;
+    let report = storage::scan(&history_workspace, &history_dir)?;
     let mut warnings = Vec::<String>::new();
     if !report.duplicate_session_keys.is_empty() {
         warnings.push("存在重复 session_key，相关映射未写入索引。".into());
     }
     let repaired = if repair {
         let _lock = storage::lock_directory(&history_dir)?;
-        let locked_report = storage::scan(&ctx.workspace, &history_dir)?;
+        let locked_report = storage::scan(&history_workspace, &history_dir)?;
         let manifest = storage::build_manifest(&locked_report);
         let state_revision = storage::read_state(&history_dir)
             .ok()
@@ -715,12 +721,45 @@ fn required_checkpoint_argument(args: &Value, name: &str) -> WorkspaceResult<Str
         })
 }
 
-fn resolve_dir(ctx: &ToolContext, args: &Value) -> WorkspaceResult<std::path::PathBuf> {
-    storage::resolve_history_dir(
-        &ctx.workspace,
-        args.get("workspace_root").and_then(Value::as_str),
+fn resolve_scope(ctx: &ToolContext, args: &Value) -> WorkspaceResult<(Workspace, std::path::PathBuf)> {
+    let active_session = host_session_key(args)
+        .filter(|session_key| ctx.has_session_active_project(session_key));
+    let project_root = active_session
+        .map(|session_key| ctx.active_project_path(Some(session_key)))
+        .unwrap_or_else(|| ctx.workspace.root().to_path_buf());
+    let history_workspace = Workspace::new(project_root)?;
+    let requested_workspace_root = args.get("workspace_root").and_then(Value::as_str);
+    if active_session.is_some() {
+        if let Some(requested_root) = requested_workspace_root {
+            validate_requested_scope_root(ctx, &history_workspace, requested_root)?;
+        }
+    }
+    let history_dir = storage::resolve_history_dir(
+        &history_workspace,
+        active_session.is_none().then_some(requested_workspace_root).flatten(),
         args.get("history_dir").and_then(Value::as_str),
-    )
+    )?;
+    Ok((history_workspace, history_dir))
+}
+
+fn validate_requested_scope_root(
+    ctx: &ToolContext,
+    history_workspace: &Workspace,
+    requested_root: &str,
+) -> WorkspaceResult<()> {
+    let requested_path = Path::new(requested_root.trim());
+    let candidate = if requested_path.is_absolute() {
+        requested_path.to_path_buf()
+    } else {
+        ctx.workspace.root().join(requested_path)
+    };
+    let requested = candidate
+        .canonicalize()
+        .map_err(|_| WorkspaceError::invalid_argument("workspace_root does not exist"))?;
+    if requested == ctx.workspace.root() || requested == history_workspace.root() {
+        return Ok(());
+    }
+    Err(WorkspaceError::path_outside_workspace())
 }
 
 fn resolve_session_key(args: &Value) -> WorkspaceResult<(String, &'static str)> {
@@ -783,8 +822,8 @@ fn history_error(
     }
 }
 
-fn history_dir_display(ctx: &ToolContext, path: &std::path::Path) -> String {
-    crate::tools::workspace::relative_display(ctx.workspace.root(), path)
+fn history_dir_display(workspace: &Workspace, path: &std::path::Path) -> String {
+    crate::tools::workspace::relative_display(workspace.root(), path)
 }
 
 fn now_timestamp() -> String {
