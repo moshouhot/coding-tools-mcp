@@ -85,7 +85,10 @@ fn same_project_reselection_refreshes_a_stale_alias_path() {
         "set_active_project",
         json!({"path": "alpha-link"}),
     ));
+    #[cfg(windows)]
     fs::remove_dir(&alias).unwrap();
+    #[cfg(unix)]
+    fs::remove_file(&alias).unwrap();
 
     let refreshed = ok(call(
         &ctx,
