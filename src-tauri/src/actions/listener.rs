@@ -19,7 +19,7 @@ use crate::auth::{
     token_exchange, AuthorizeForm, AuthorizeParams, OAuthRuntime, TokenForm,
 };
 use crate::audit::request_context_from_headers;
-use crate::tools::{self, is_allowed_tool, policy::PolicySettings, wrap_tool_result, ToolContext};
+use crate::tools::{self, is_actions_tool, policy::PolicySettings, wrap_tool_result, ToolContext};
 use crate::tunnel::append_profile_log;
 
 use super::auth::{require_actions_auth, AuthConfig};
@@ -153,7 +153,7 @@ async fn serve(
         .filter(|tool| {
             tool.get("name")
                 .and_then(Value::as_str)
-                .map(is_allowed_tool)
+                .map(is_actions_tool)
                 .unwrap_or(false)
         })
         .collect();

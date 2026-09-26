@@ -62,6 +62,14 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 3. 设置工作区名称、MCP 端口和认证方式。
 4. 保存后，工作区会长期保留在左侧列表中。
 
+#### 一个 Connector 管理多个项目（可选）
+
+如果很多项目都位于同一个父目录，也可以把这个父目录直接作为 **Workspace Pool**，例如 `F:\Nextcloud\project`，然后只在 Codex / ChatGPT 中配置一个 MCP Connector。用户在对话里明确说“review 项目 `F:\Nextcloud\project\coding-tools-mcp`”或“查看项目 `F:\Nextcloud\project\逆向环境\utools`”时，AI 会调用 `set_active_project`，把该目录绑定为**当前对话的 Active Project**。文件、命令、Git 和 Patch 的相对路径随后都会以这个项目为默认根目录。
+
+Active Project 按宿主会话隔离，所以多个 Codex 对话可以通过同一个 Connector 同时操作不同项目；用户明确给出的项目目录不要求存在 `.git`、`package.json` 或 `Cargo.toml`。只有在用户仅提供项目名而没有路径时，AI 才需要调用 `discover_projects` 辅助查找并在唯一匹配时自动绑定。
+
+> 当前 Active Project MVP 已覆盖文件、Exec、Git、Patch 和项目根灾难性删除保护；History / Harness 仍以 Workspace Pool 为身份边界，后续版本再做项目级下沉。
+
 ### 3. 配置公网隧道
 
 如果 AI 客户端不在本机，需要把本地 MCP 暴露为 HTTPS 地址：
@@ -109,6 +117,7 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 history_session_bootstrap
 server_info
 get_default_cwd
+get_active_project
 git_status
 check_exec_environment
 ```

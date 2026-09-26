@@ -86,7 +86,7 @@ fn initialize_result() -> Value {
             "title": "Coding Tools MCP",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "Use these tools only for local coding operations inside the configured workspace. At the start of every new ChatGPT conversation, before answering the user's first request, call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence."
+        "instructions": "Use these tools only for local coding operations inside the configured workspace. The configured workspace may be a pool containing many independent projects. When the user's request explicitly identifies a directory inside the workspace as the project, repository, repo, codebase, work tree, or clearly makes that directory the primary coding target, automatically call set_active_project with that directory before project work. The user's explicit directory designation is authoritative; do not require .git, package.json, Cargo.toml, or other project markers and do not ask for confirmation. Reuse the active project for later requests in the same conversation. Do not switch active project merely because the user incidentally references another file or directory. If the user names a project without a path, use discover_projects and auto-bind only when the match is unique. Active Project is scoped to the host conversation, so other conversations may work in other projects through the same connector. At the start of every new ChatGPT conversation, before answering the user's first request, call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same conversation resume the same session and must not create duplicates. Preserve session_key and current_path returned by bootstrap, then pass them unchanged as session_key and expected_path to every history_session_checkpoint call. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence."
     })
 }
 
@@ -99,12 +99,13 @@ fn handle_tools_call(
         .get("name")
         .and_then(Value::as_str)
         .ok_or_else(|| serde_json::json!({ "code": -32602, "message": "Missing tool name" }))?;
-    let args = tool_arguments(name, params);
-
     if state.upstream.owns_tool(name) {
-        let result = tauri::async_runtime::block_on(state.upstream.call_tool(name, args));
+        let result =
+            tauri::async_runtime::block_on(state.upstream.call_tool(name, raw_tool_arguments(params)));
         return Ok(normalize_upstream_result(result));
     }
+
+    let args = tool_arguments(name, params);
 
     let canonical_name = crate::tools::registry::canonical_tool_name(name);
     let known = crate::tools::registry::exposed_tool_names(&state.tools.tool_profile);
@@ -155,25 +156,32 @@ fn normalize_upstream_result(result: Result<Value, String>) -> Value {
 }
 
 fn tool_arguments(name: &str, params: &Value) -> Value {
-    let mut args = params
-        .get("arguments")
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!({}));
-    if name.starts_with("history_session_") {
-        if let Some(session_key) = params
-            .get("_meta")
-            .and_then(|meta| meta.get("openai/session"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            if !args.is_object() {
-                args = serde_json::json!({});
-            }
-            args["_host_session_key"] = Value::String(session_key.to_string());
+    let mut args = raw_tool_arguments(params);
+    let _ = name;
+    if let Some(object) = args.as_object_mut() {
+        object.remove("_host_session_key");
+        object.remove("_active_project_root");
+    }
+    if let Some(session_key) = params
+        .get("_meta")
+        .and_then(|meta| meta.get("openai/session"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if !args.is_object() {
+            args = serde_json::json!({});
         }
+        args["_host_session_key"] = Value::String(session_key.to_string());
     }
     args
+}
+
+fn raw_tool_arguments(params: &Value) -> Value {
+    params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}))
 }
 
 // 审计在 SharedState 创建时绑定：此处同时拥有正式 workspace_id，且尚未被多请求共享；
@@ -206,7 +214,7 @@ mod tests {
     use crate::mcp::upstream::UpstreamMcpManager;
     use crate::tools::ToolContext;
 
-    use super::{handle_request, initialize_result, tool_arguments, McpState};
+    use super::{handle_request, initialize_result, raw_tool_arguments, tool_arguments, McpState};
 
     #[test]
     fn initialize_instructions_define_the_history_persistence_workflow() {
@@ -219,6 +227,10 @@ mod tests {
         assert!(instructions.contains("initial_user_input"));
         assert!(instructions.contains("must not create duplicates"));
         assert!(instructions.contains("history_session_checkpoint"));
+        assert!(instructions.contains("set_active_project"));
+        assert!(instructions.contains("discover_projects"));
+        assert!(instructions.contains("Active Project is scoped to the host conversation"));
+        assert!(instructions.contains("do not ask for confirmation"));
         assert!(instructions.contains("raw_user_input"));
         assert!(instructions.contains("history_session_search"));
         assert!(instructions.contains("history_session_read"));
@@ -253,7 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn chatgpt_session_metadata_is_injected_only_for_history_tools() {
+    fn chatgpt_session_metadata_is_injected_for_all_local_tools() {
         let params = json!({
             "arguments": {"session_key": "explicit"},
             "_meta": {"openai/session": "chatgpt-conversation"}
@@ -264,7 +276,32 @@ mod tests {
 
         let existing = tool_arguments("read_file", &params);
         assert_eq!(existing["session_key"], "explicit");
-        assert!(existing.get("_host_session_key").is_none());
+        assert_eq!(existing["_host_session_key"], "chatgpt-conversation");
+
+        let upstream_safe = raw_tool_arguments(&params);
+        assert_eq!(upstream_safe["session_key"], "explicit");
+        assert!(upstream_safe.get("_host_session_key").is_none());
+    }
+
+    #[test]
+    fn local_tool_arguments_cannot_spoof_internal_session_context() {
+        let params = json!({
+            "arguments": {
+                "path": "project-a",
+                "_host_session_key": "spoofed",
+                "_active_project_root": "other-project"
+            }
+        });
+        let args = tool_arguments("set_active_project", &params);
+        assert!(args.get("_host_session_key").is_none());
+        assert!(args.get("_active_project_root").is_none());
+
+        let params = json!({
+            "arguments": {"path": "project-a", "_host_session_key": "spoofed"},
+            "_meta": {"openai/session": "trusted-host-session"}
+        });
+        let args = tool_arguments("set_active_project", &params);
+        assert_eq!(args["_host_session_key"], "trusted-host-session");
     }
 
     #[test]
@@ -303,6 +340,61 @@ mod tests {
             .expect("read history file");
         assert!(content.contains("**Session key:** chatgpt-session"));
         assert!(!content.contains("**Session key:** explicit-session"));
+    }
+
+    #[test]
+    fn active_project_is_bound_from_openai_session_metadata() {
+        let workspace = tempfile::tempdir().expect("workspace tempdir");
+        let harness = tempfile::tempdir().expect("harness tempdir");
+        fs::create_dir_all(workspace.path().join("project-a")).expect("project-a");
+        fs::create_dir_all(workspace.path().join("project-b")).expect("project-b");
+        fs::write(workspace.path().join("project-a/name.txt"), "A\n").expect("write A");
+        fs::write(workspace.path().join("project-b/name.txt"), "B\n").expect("write B");
+        let state = Arc::new(McpState {
+            tools: Arc::new(
+                ToolContext::for_test(workspace.path().to_path_buf(), harness.path().to_path_buf())
+                    .expect("tool context"),
+            ),
+            upstream: Arc::new(UpstreamMcpManager::empty()),
+        });
+
+        for (session, project) in [("chat-a", "project-a"), ("chat-b", "project-b")] {
+            let response = handle_request(
+                &state,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "set_active_project",
+                        "arguments": {"path": project},
+                        "_meta": {"openai/session": session}
+                    }
+                }),
+            );
+            assert_eq!(response["result"]["structuredContent"]["ok"], true);
+            assert_eq!(
+                response["result"]["structuredContent"]["active_project"],
+                project
+            );
+        }
+
+        for (session, expected) in [("chat-a", "A\n"), ("chat-b", "B\n")] {
+            let response = handle_request(
+                &state,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "read_file",
+                        "arguments": {"path": "name.txt"},
+                        "_meta": {"openai/session": session}
+                    }
+                }),
+            );
+            assert_eq!(response["result"]["structuredContent"]["content"], expected);
+        }
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -7,8 +8,9 @@ use serde_json::{json, Value};
 use crate::tools::workspace::{tool_ok, Workspace, WorkspaceError};
 
 pub fn git_status(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
+    let project_root = git_project_root(ws, args)?;
     let path = args.get("path").and_then(Value::as_str).unwrap_or(".");
-    let resolved = ws.resolve_existing(path)?;
+    let resolved = ws.resolve_existing_at(&project_root, path)?;
     let max_entries = args
         .get("max_entries")
         .and_then(Value::as_u64)
@@ -96,7 +98,34 @@ pub fn git_status(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError>
     })))
 }
 
+fn git_project_root(ws: &Workspace, args: &Value) -> Result<PathBuf, WorkspaceError> {
+    let raw = args
+        .get("_active_project_root")
+        .and_then(Value::as_str)
+        .unwrap_or(".");
+    if raw == "." || raw.is_empty() {
+        return Ok(ws.root().to_path_buf());
+    }
+    let resolved = ws.resolve_existing(raw)?;
+    if !resolved.path.is_dir() {
+        return Err(WorkspaceError::not_a_directory(
+            "Active Project must be a directory",
+        ));
+    }
+    Ok(resolved.path)
+}
+
+fn relative_to(base: &Path, path: &Path) -> String {
+    let relative = path.strip_prefix(base).unwrap_or(path);
+    if relative.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        relative.to_string_lossy().replace('\\', "/")
+    }
+}
+
 pub fn git_diff(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
+    let project_root = git_project_root(ws, args)?;
     let staged = args.get("staged").and_then(Value::as_bool).unwrap_or(false);
     let unstaged = args.get("unstaged").and_then(Value::as_bool).unwrap_or(true);
     let context = args
@@ -123,7 +152,7 @@ pub fn git_diff(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
         ws.reject_unsafe_text(p)?;
     }
 
-    if !is_git_repo(ws.root()) {
+    if !is_git_repo(&project_root) {
         return Ok(tool_ok(json!({
             "diff": "",
             "files": [],
@@ -134,10 +163,10 @@ pub fn git_diff(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
 
     let mut chunks = Vec::new();
     if unstaged {
-        chunks.push(run_git_diff(ws.root(), context, &path_filters, false)?);
+        chunks.push(run_git_diff(&project_root, context, &path_filters, false)?);
     }
     if staged {
-        chunks.push(run_git_diff(ws.root(), context, &path_filters, true)?);
+        chunks.push(run_git_diff(&project_root, context, &path_filters, true)?);
     }
     let mut combined = chunks.join("\n");
     if !combined.is_empty() && !combined.ends_with('\n') {
@@ -159,8 +188,9 @@ pub fn git_diff(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
 }
 
 pub fn git_log(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
+    let project_root = git_project_root(ws, args)?;
     let path = args.get("path").and_then(Value::as_str).unwrap_or(".");
-    let resolved = ws.resolve_existing(path)?;
+    let resolved = ws.resolve_existing_at(&project_root, path)?;
     let ref_name = validate_git_ref(args.get("ref").and_then(Value::as_str).unwrap_or("HEAD"))?;
     let max_count = args
         .get("max_count")
@@ -173,7 +203,7 @@ pub fn git_log(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
         .unwrap_or(0)
         .min(10_000) as usize;
 
-    if !is_git_repo(ws.root()) {
+    if !is_git_repo(&project_root) {
         return Ok(tool_ok(json!({
             "is_repo": false,
             "commits": [],
@@ -185,11 +215,7 @@ pub fn git_log(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
     let max_count_arg = format!("--max-count={}", max_count + 1);
     let skip_arg = format!("--skip={skip}");
     let pretty = "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s%x1e";
-    let path_filter = if resolved.display.is_empty() {
-        ".".to_string()
-    } else {
-        resolved.display.clone()
-    };
+    let path_filter = relative_to(&project_root, &resolved.path);
     let mut cmd_args = vec![
         "log",
         max_count_arg.as_str(),
@@ -203,7 +229,7 @@ pub fn git_log(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
         cmd_args.push(path_filter.as_str());
     }
 
-    let completed = run_git(ws.root(), &cmd_args, Duration::from_secs(10))?;
+    let completed = run_git(&project_root, &cmd_args, Duration::from_secs(10))?;
     if !completed.success {
         return Err(git_error(&completed.stderr));
     }
@@ -240,7 +266,8 @@ pub fn git_log(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
 }
 
 pub fn git_show(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
-    if !is_git_repo(ws.root()) {
+    let project_root = git_project_root(ws, args)?;
+    if !is_git_repo(&project_root) {
         return Ok(tool_ok(json!({
             "is_repo": false,
             "content": "",
@@ -292,7 +319,7 @@ pub fn git_show(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
         }
     }
 
-    let completed = run_git(ws.root(), &cmd_args, Duration::from_secs(10))?;
+    let completed = run_git(&project_root, &cmd_args, Duration::from_secs(10))?;
     if !completed.success {
         return Err(git_error(&completed.stderr));
     }
@@ -316,11 +343,12 @@ pub fn git_show(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
 }
 
 pub fn git_blame(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> {
+    let project_root = git_project_root(ws, args)?;
     let path = args
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| WorkspaceError::invalid_argument("path is required"))?;
-    let resolved = ws.resolve_existing(path)?;
+    let resolved = ws.resolve_existing_at(&project_root, path)?;
     if resolved.path.is_dir() {
         return Err(WorkspaceError::Tool {
             code: "IS_DIRECTORY",
@@ -329,7 +357,7 @@ pub fn git_blame(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> 
             retryable: false,
         });
     }
-    if !is_git_repo(ws.root()) {
+    if !is_git_repo(&project_root) {
         return Ok(tool_ok(json!({
             "is_repo": false,
             "path": resolved.display,
@@ -372,9 +400,10 @@ pub fn git_blame(ws: &Workspace, args: &Value) -> Result<Value, WorkspaceError> 
         cmd_args.push(r);
     }
     cmd_args.push("--");
-    cmd_args.push(resolved.display.as_str());
+    let project_path = relative_to(&project_root, &resolved.path);
+    cmd_args.push(project_path.as_str());
 
-    let completed = run_git(ws.root(), &cmd_args, Duration::from_secs(10))?;
+    let completed = run_git(&project_root, &cmd_args, Duration::from_secs(10))?;
     if !completed.success {
         return Err(git_error(&completed.stderr));
     }

@@ -62,6 +62,14 @@ The macOS build is currently unsigned. If macOS blocks the first launch, allow i
 3. Configure the workspace name, MCP port, and authentication mode.
 4. Save it. The workspace remains available in the sidebar across conversations and restarts.
 
+#### One Connector for many projects (optional)
+
+If many projects live under the same parent directory, that parent can be used as a **Workspace Pool**, for example `F:\Nextcloud\project`, while Codex / ChatGPT keeps only one MCP Connector. When the user explicitly says something like “review project `F:\Nextcloud\project\coding-tools-mcp`” or “inspect project `F:\Nextcloud\project\逆向环境\utools`”, the AI calls `set_active_project` and binds that directory as the **Active Project for the current conversation**. Relative file, command, Git, and Patch operations then default to that project root.
+
+Active Project state is scoped to the host conversation, so several Codex conversations can use the same Connector while working in different projects at the same time. An explicit user-designated project directory does not need `.git`, `package.json`, or `Cargo.toml`; `discover_projects` is only a fallback when the user gives a project name without an exact path, and automatic binding should happen only for a unique match.
+
+> The current Active Project MVP covers file operations, Exec, Git, Patch, and catastrophic-delete protection for the active project root. History / Harness still use the Workspace Pool as their identity boundary for now.
+
 ### 3. Configure a public tunnel
 
 When the AI client is not running on the same machine, expose MCP through HTTPS:

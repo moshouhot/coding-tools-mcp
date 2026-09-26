@@ -9,6 +9,7 @@ pub mod history;
 mod image_tool;
 pub mod patch;
 pub mod policy;
+pub mod project;
 pub mod registry;
 pub mod session;
 pub mod workspace;
@@ -19,6 +20,7 @@ pub use context::{SharedToolContext, ToolContext};
 pub use dispatch::{call_tool, call_tool_with_audit, record_tool_rejection_with_audit};
 pub use policy::{validate_actions_exposure, PolicySettings};
 pub use registry::{
-    exposed_tool_names, is_allowed_tool, list_tools, list_tools_for_profile, MUTATING_TOOLS,
+    exposed_tool_names, is_actions_tool, is_allowed_tool, list_tools, list_tools_for_profile,
+    MUTATING_TOOLS,
 };
 pub use workspace::{wrap_mcp_tool_result, wrap_tool_result, Workspace};

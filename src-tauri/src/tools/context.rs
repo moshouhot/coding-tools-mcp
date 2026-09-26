@@ -1,3 +1,4 @@
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -7,6 +8,40 @@ use crate::tools::policy::PolicySettings;
 use crate::tools::session::SessionStore;
 use crate::tools::workspace::{relative_display, Workspace};
 use crate::workspace::AuthConfig;
+
+const MAX_ACTIVE_PROJECT_SESSIONS: usize = 256;
+
+#[derive(Default)]
+struct ActiveProjectSessions {
+    paths: HashMap<String, PathBuf>,
+    order: VecDeque<String>,
+}
+
+impl ActiveProjectSessions {
+    fn get(&self, session_key: &str) -> Option<PathBuf> {
+        self.paths.get(session_key).cloned()
+    }
+
+    fn contains_key(&self, session_key: &str) -> bool {
+        self.paths.contains_key(session_key)
+    }
+
+    fn insert(&mut self, session_key: String, path: PathBuf) {
+        if self.paths.contains_key(&session_key) {
+            self.paths.insert(session_key, path);
+            return;
+        }
+        while self.paths.len() >= MAX_ACTIVE_PROJECT_SESSIONS {
+            let Some(oldest) = self.order.pop_front() else {
+                self.paths.clear();
+                break;
+            };
+            self.paths.remove(&oldest);
+        }
+        self.order.push_back(session_key.clone());
+        self.paths.insert(session_key, path);
+    }
+}
 
 pub struct ToolContext {
     pub workspace: Workspace,
@@ -20,6 +55,7 @@ pub struct ToolContext {
     audit: Option<AuditStore>,
     audit_workspace_id: String,
     default_cwd: Mutex<PathBuf>,
+    active_projects: Mutex<ActiveProjectSessions>,
     pub sessions: Arc<SessionStore>,
 }
 
@@ -80,6 +116,7 @@ impl ToolContext {
             audit: None,
             audit_workspace_id,
             default_cwd: Mutex::new(root),
+            active_projects: Mutex::new(ActiveProjectSessions::default()),
             sessions: Arc::new(SessionStore::new()),
         }
     }
@@ -134,6 +171,39 @@ impl ToolContext {
 
     pub fn default_cwd_path(&self) -> PathBuf {
         self.default_cwd.lock().expect("cwd lock").clone()
+    }
+
+    pub fn active_project_path(&self, session_key: Option<&str>) -> PathBuf {
+        if let Some(session_key) = session_key.map(str::trim).filter(|value| !value.is_empty()) {
+            if let Some(path) = self
+                .active_projects
+                .lock()
+                .expect("active project lock")
+                .get(session_key)
+            {
+                return path;
+            }
+        }
+        self.default_cwd_path()
+    }
+
+    pub fn active_project_display(&self, session_key: Option<&str>) -> String {
+        let path = self.active_project_path(session_key);
+        relative_display(self.workspace.root(), &path)
+    }
+
+    pub fn has_session_active_project(&self, session_key: &str) -> bool {
+        self.active_projects
+            .lock()
+            .expect("active project lock")
+            .contains_key(session_key)
+    }
+
+    pub fn set_session_active_project(&self, session_key: &str, path: PathBuf) {
+        self.active_projects
+            .lock()
+            .expect("active project lock")
+            .insert(session_key.to_string(), path);
     }
 
     pub fn audit_store(&self) -> Option<AuditStore> {

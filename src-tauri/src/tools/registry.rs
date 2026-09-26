@@ -170,6 +170,30 @@ pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
         false,
     ),
     (
+        "get_active_project",
+        "Get active project",
+        "Return the Active Project bound to the current host conversation inside the workspace pool.",
+        true,
+        false,
+        false,
+    ),
+    (
+        "set_active_project",
+        "Set active project",
+        "Bind the current host conversation to a project directory inside the workspace pool. Use this automatically when the user explicitly identifies a directory as the project/repo/codebase or primary coding target. Absolute paths are accepted only when they remain inside the configured workspace.",
+        true,
+        false,
+        false,
+    ),
+    (
+        "discover_projects",
+        "Discover projects",
+        "Find project-directory candidates inside the workspace pool. Use this when the user names a project without giving an exact path; explicit user-provided project paths do not require discovery.",
+        true,
+        false,
+        false,
+    ),
+    (
         "read_file",
         "Read file",
         "Read a UTF-8 text file slice inside the configured workspace.",
@@ -326,6 +350,9 @@ pub const CORE_TOOLS: &[&str] = &[
     "check_exec_environment",
     "get_default_cwd",
     "set_default_cwd",
+    "get_active_project",
+    "set_active_project",
+    "discover_projects",
     "read_file",
     "list_dir",
     "list_files",
@@ -350,6 +377,9 @@ pub const CORE_READ_ONLY_TOOLS: &[&str] = &[
     "check_exec_environment",
     "get_default_cwd",
     "set_default_cwd",
+    "get_active_project",
+    "set_active_project",
+    "discover_projects",
     "read_file",
     "list_dir",
     "list_files",
@@ -378,6 +408,9 @@ pub const ALLOWED_TOOLS: &[&str] = &[
     "exec_health_check",
     "get_default_cwd",
     "set_default_cwd",
+    "get_active_project",
+    "set_active_project",
+    "discover_projects",
     "read_file",
     "list_dir",
     "list_files",
@@ -417,6 +450,7 @@ pub const MUTATING_TOOLS: &[&str] = &[
     "write_stdin",
     "kill_session",
     "set_default_cwd",
+    "set_active_project",
     "start_task",
     "update_task",
     "pause_task",
@@ -433,6 +467,8 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "check_exec_environment",
     "exec_health_check",
     "get_default_cwd",
+    "get_active_project",
+    "discover_projects",
     "read_file",
     "list_dir",
     "list_files",
@@ -456,6 +492,14 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
 
 pub fn is_allowed_tool(name: &str) -> bool {
     ALLOWED_TOOLS.contains(&name)
+}
+
+pub fn is_actions_tool(name: &str) -> bool {
+    is_allowed_tool(name)
+        && !matches!(
+            name,
+            "get_active_project" | "set_active_project" | "discover_projects"
+        )
 }
 
 pub fn canonical_tool_name(name: &str) -> &str {
@@ -896,6 +940,28 @@ pub fn input_schema(name: &str) -> Value {
             },
             "additionalProperties": false
         }),
+        "get_active_project" => json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }),
+        "set_active_project" => json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "minLength": 1 }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+        }),
+        "discover_projects" => json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "default": "" },
+                "max_depth": { "type": "integer", "minimum": 1, "maximum": 6, "default": 4 },
+                "max_results": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 }
+            },
+            "additionalProperties": false
+        }),
         "view_image" => json!({
             "type": "object",
             "properties": {
@@ -921,10 +987,10 @@ pub fn input_schema(name: &str) -> Value {
 mod tests {
     use std::collections::HashSet;
 
-    use super::{input_schema, list_tools_for_profile};
+    use super::{input_schema, is_actions_tool, list_tools_for_profile};
 
     #[test]
-    fn core_catalog_exposes_26_chatgpt_compatible_tools() {
+    fn core_catalog_exposes_29_chatgpt_compatible_tools() {
         let tools = list_tools_for_profile("core");
         let names: Vec<_> = tools
             .iter()
@@ -932,13 +998,16 @@ mod tests {
             .collect();
         let unique: HashSet<_> = names.iter().copied().collect();
 
-        assert_eq!(tools.len(), 26);
+        assert_eq!(tools.len(), 29);
         assert_eq!(unique.len(), tools.len());
         assert!(names.contains(&"history_session_bootstrap"));
         assert!(names.contains(&"history_session_checkpoint"));
         assert!(names.contains(&"history_session_validate"));
         assert!(names.contains(&"history_session_search"));
         assert!(names.contains(&"history_session_read"));
+        assert!(names.contains(&"get_active_project"));
+        assert!(names.contains(&"set_active_project"));
+        assert!(names.contains(&"discover_projects"));
         assert!(names.contains(&"grep_text"));
         assert!(!names.contains(&"grep"));
 
@@ -950,5 +1019,13 @@ mod tests {
             assert!(schema.get("anyOf").is_none(), "{name} anyOf");
             assert!(schema.get("$ref").is_none(), "{name} ref");
         }
+    }
+
+    #[test]
+    fn session_project_tools_are_not_exposed_as_actions() {
+        assert!(is_actions_tool("read_file"));
+        assert!(!is_actions_tool("get_active_project"));
+        assert!(!is_actions_tool("set_active_project"));
+        assert!(!is_actions_tool("discover_projects"));
     }
 }

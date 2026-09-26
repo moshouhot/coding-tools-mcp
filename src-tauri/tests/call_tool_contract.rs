@@ -25,6 +25,41 @@ fn server_info_returns_workspace_and_tools() {
 }
 
 #[test]
+fn explicit_relative_exec_workdir_is_resolved_from_active_project() {
+    let temp = tempfile::tempdir().expect("创建临时目录");
+    let project = temp.path().join("project-a");
+    fs::create_dir_all(project.join("subdir")).expect("创建子目录");
+    let ctx = ctx_for(temp.path());
+    assert_ok(&invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "project-a", "_host_session_key": "session-a"}),
+    ));
+
+    let root = invoke(
+        &ctx,
+        "exec_command",
+        json!({"cmd": "pwd", "workdir": ".", "_host_session_key": "session-a"}),
+    );
+    let root_stdout = assert_ok(&root)["stdout"]
+        .as_str()
+        .unwrap_or("")
+        .replace('\\', "/");
+    assert!(root_stdout.contains("project-a"), "{root_stdout}");
+
+    let subdir = invoke(
+        &ctx,
+        "exec_command",
+        json!({"cmd": "pwd", "workdir": "subdir", "_host_session_key": "session-a"}),
+    );
+    let subdir_stdout = assert_ok(&subdir)["stdout"]
+        .as_str()
+        .unwrap_or("")
+        .replace('\\', "/");
+    assert!(subdir_stdout.contains("project-a/subdir"), "{subdir_stdout}");
+}
+
+#[test]
 fn read_file_happy_path() {
     let fx = tiny_js_fixture();
     let ctx = ctx_for(&fx.root);
@@ -135,6 +170,199 @@ fn default_cwd_is_used_by_file_and_native_exec_tools() {
 }
 
 #[test]
+fn active_project_is_isolated_per_host_session_and_accepts_absolute_paths() {
+    let temp = tempfile::tempdir().expect("创建临时目录");
+    let root = temp.path();
+    let project_a = root.join("project-a");
+    let project_b = root.join("project-b");
+    fs::create_dir_all(&project_a).expect("创建 project-a");
+    fs::create_dir_all(&project_b).expect("创建 project-b");
+    fs::write(project_a.join("name.txt"), "A\n").expect("写入 A");
+    fs::write(project_b.join("name.txt"), "B\n").expect("写入 B");
+
+    let ctx = ctx_for(root);
+    let a = invoke(
+        &ctx,
+        "set_active_project",
+        json!({
+            "path": project_a.display().to_string(),
+            "_host_session_key": "session-a"
+        }),
+    );
+    assert_eq!(assert_ok(&a)["active_project"], "project-a");
+
+    let b = invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "project-b", "_host_session_key": "session-b"}),
+    );
+    assert_eq!(assert_ok(&b)["active_project"], "project-b");
+
+    let read_a = invoke(
+        &ctx,
+        "read_file",
+        json!({"path": "name.txt", "_host_session_key": "session-a"}),
+    );
+    assert_eq!(assert_ok(&read_a)["content"], "A\n");
+    let read_b = invoke(
+        &ctx,
+        "read_file",
+        json!({"path": "name.txt", "_host_session_key": "session-b"}),
+    );
+    assert_eq!(assert_ok(&read_b)["content"], "B\n");
+
+    let active_a = invoke(
+        &ctx,
+        "get_active_project",
+        json!({"_host_session_key": "session-a"}),
+    );
+    let active_b = invoke(
+        &ctx,
+        "get_active_project",
+        json!({"_host_session_key": "session-b"}),
+    );
+    assert_eq!(assert_ok(&active_a)["active_project"], "project-a");
+    assert_eq!(assert_ok(&active_b)["active_project"], "project-b");
+}
+
+#[test]
+fn active_project_rejects_absolute_paths_outside_workspace_pool() {
+    let pool = tempfile::tempdir().expect("创建 Workspace Pool");
+    let outside = tempfile::tempdir().expect("创建外部目录");
+    let ctx = ctx_for(pool.path());
+    let result = invoke(
+        &ctx,
+        "set_active_project",
+        json!({
+            "path": outside.path().display().to_string(),
+            "_host_session_key": "session-a"
+        }),
+    );
+    let error = assert_err(&result);
+    assert_eq!(error["error"]["code"], "PATH_OUTSIDE_WORKSPACE");
+}
+
+#[test]
+fn active_project_root_keeps_catastrophic_delete_floor() {
+    let temp = tempfile::tempdir().expect("创建临时目录");
+    let project = temp.path().join("project-a");
+    fs::create_dir_all(&project).expect("创建项目目录");
+    let mut ctx = ctx_for(temp.path());
+    ctx.permission_mode = "dangerous".into();
+    ctx.policy.permission_mode = "dangerous".into();
+
+    assert_ok(&invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "project-a", "_host_session_key": "session-a"}),
+    ));
+    let blocked = invoke(
+        &ctx,
+        "exec_command",
+        json!({"cmd": "rm -rf .", "_host_session_key": "session-a"}),
+    );
+    let error = assert_err(&blocked);
+    assert!(error["error"]["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("active project root"));
+}
+
+#[test]
+fn discover_projects_supports_marker_scan_and_name_lookup() {
+    let temp = tempfile::tempdir().expect("创建临时目录");
+    let marked = temp.path().join("marked-repo");
+    let plain = temp.path().join("逆向环境").join("utools");
+    fs::create_dir_all(marked.join(".git")).expect("创建 marker");
+    fs::create_dir_all(&plain).expect("创建 plain project");
+    let ctx = ctx_for(temp.path());
+
+    let all = invoke(&ctx, "discover_projects", json!({"max_depth": 3}));
+    let projects = assert_ok(&all)["projects"].as_array().unwrap().clone();
+    assert!(projects.iter().any(|project| project["path"] == "marked-repo"));
+
+    let by_name = invoke(
+        &ctx,
+        "discover_projects",
+        json!({"query": "utools", "max_depth": 3}),
+    );
+    let projects = assert_ok(&by_name)["projects"].as_array().unwrap().clone();
+    assert_eq!(projects.len(), 1);
+    assert!(projects[0]["path"].as_str().unwrap_or("").contains("utools"));
+}
+
+#[test]
+fn git_tools_follow_session_active_project_inside_workspace_pool() {
+    let temp = tempfile::tempdir().expect("创建临时目录");
+    let root = temp.path();
+    let repo_a = root.join("repo-a");
+    let repo_b = root.join("repo-b");
+    for (repo, content, message) in [
+        (&repo_a, "alpha\n", "commit-a"),
+        (&repo_b, "beta\n", "commit-b"),
+    ] {
+        fs::create_dir_all(repo).expect("创建 repo");
+        fs::write(repo.join("README.md"), content).expect("写 README");
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "user.name", "测试用户"],
+            vec!["add", "README.md"],
+            vec!["commit", "-q", "-m", message],
+        ] {
+            let output = Command::new("git")
+                .current_dir(repo)
+                .args(args)
+                .output()
+                .expect("执行 git");
+            assert!(output.status.success(), "git 命令失败: {:?}", output);
+        }
+    }
+
+    fs::write(repo_a.join("README.md"), "alpha changed\n").expect("修改 repo-a");
+    let ctx = ctx_for(root);
+    assert_ok(&invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "repo-a", "_host_session_key": "session-a"}),
+    ));
+    assert_ok(&invoke(
+        &ctx,
+        "set_active_project",
+        json!({"path": "repo-b", "_host_session_key": "session-b"}),
+    ));
+
+    let log_a = invoke(
+        &ctx,
+        "git_log",
+        json!({"_host_session_key": "session-a", "max_count": 3}),
+    );
+    assert_eq!(assert_ok(&log_a)["commits"][0]["subject"], "commit-a");
+    let log_b = invoke(
+        &ctx,
+        "git_log",
+        json!({"_host_session_key": "session-b", "max_count": 3}),
+    );
+    assert_eq!(assert_ok(&log_b)["commits"][0]["subject"], "commit-b");
+
+    let diff_a = invoke(
+        &ctx,
+        "git_diff",
+        json!({"_host_session_key": "session-a"}),
+    );
+    assert!(assert_ok(&diff_a)["diff"]
+        .as_str()
+        .unwrap_or("")
+        .contains("alpha changed"));
+    let diff_b = invoke(
+        &ctx,
+        "git_diff",
+        json!({"_host_session_key": "session-b"}),
+    );
+    assert_eq!(assert_ok(&diff_b)["diff"], "");
+}
+
+#[test]
 fn git_log_root_does_not_pass_empty_pathspec() {
     let temp = tempfile::tempdir().expect("创建临时目录");
     let workspace = temp.path().join("repo");
@@ -208,8 +436,11 @@ fn core_profile_keeps_the_default_capabilities_and_adds_history_tools() {
         .copied()
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(names, expected);
-    assert_eq!(names.len(), 26);
+    assert_eq!(names.len(), 29);
     assert!(names.contains("grep_text"));
+    assert!(names.contains("get_active_project"));
+    assert!(names.contains("set_active_project"));
+    assert!(names.contains("discover_projects"));
     assert!(names.contains("history_session_bootstrap"));
     assert!(names.contains("history_session_checkpoint"));
     assert!(names.contains("history_session_validate"));

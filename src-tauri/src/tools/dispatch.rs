@@ -7,7 +7,7 @@ use crate::audit::{current_time_ms, AuditRequestContext};
 use crate::tools::context::ToolContext;
 use crate::tools::policy::{validate_tool_arguments_for_workspace, PolicyError};
 use crate::tools::workspace::{tool_err, tool_err_code, tool_ok, WorkspaceError};
-use crate::tools::{exec, file, git, history, image_tool, patch, session};
+use crate::tools::{exec, file, git, history, image_tool, patch, project, session};
 
 fn policy_tool_err(err: PolicyError) -> Value {
     let dangerous = err
@@ -123,6 +123,9 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
         "exec_health_check" => exec::exec_health_check(ctx),
         "get_default_cwd" => get_default_cwd(ctx),
         "set_default_cwd" => set_default_cwd(ctx, &effective_args),
+        "get_active_project" => project::get_active_project(ctx, &effective_args),
+        "set_active_project" => project::set_active_project(ctx, &effective_args),
+        "discover_projects" => project::discover_projects(ctx, &effective_args),
         "read_file" => file::read_file(ws, &effective_args),
         "list_dir" => file::list_dir(ws, &effective_args),
         "list_files" => file::list_files(ws, &effective_args),
@@ -236,6 +239,14 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
     output
 }
 
+fn strip_internal_context(mut args: Value) -> Value {
+    if let Some(object) = args.as_object_mut() {
+        object.remove("_host_session_key");
+        object.remove("_active_project_root");
+    }
+    args
+}
+
 // 审计包装紧贴唯一 dispatcher：执行前固化补全默认 cwd 后的实际参数，用单调时钟计时，
 // 执行后记录同一份结果；HTTP 元数据仍由传输入口提供。写审计失败只告警，不改变工具响应。
 pub fn call_tool_with_audit(
@@ -246,7 +257,7 @@ pub fn call_tool_with_audit(
 ) -> Value {
     let started_at_ms = current_time_ms();
     let started = Instant::now();
-    let audited_args = apply_default_cwd(ctx, name, args);
+    let audited_args = strip_internal_context(apply_default_cwd(ctx, name, args));
     let output = call_tool(ctx, name, args);
     let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
     let finished_at_ms = started_at_ms.saturating_add(elapsed_ms);
@@ -280,12 +291,13 @@ pub fn record_tool_rejection_with_audit(
     let Some(audit) = ctx.audit_store() else {
         return;
     };
+    let audited_args = strip_internal_context(args.clone());
     if let Err(error) = audit.record_tool_rejection(
         request,
         ctx.audit_workspace_id(),
         &ctx.workspace_path(),
         name,
-        args,
+        &audited_args,
         error_code,
         error_message,
     ) {
@@ -294,44 +306,44 @@ pub fn record_tool_rejection_with_audit(
 }
 
 fn apply_default_cwd(ctx: &ToolContext, name: &str, args: &Value) -> Value {
-    let base = if ctx.default_cwd_path() == ctx.workspace.root() {
+    let active_project = project::active_project_root(ctx, args);
+    let base = if active_project == ctx.workspace.root() {
         ".".to_string()
     } else {
-        ctx.default_cwd_display()
+        crate::tools::workspace::relative_display(ctx.workspace.root(), &active_project)
     };
+    let mut effective = if args.is_object() {
+        args.clone()
+    } else {
+        json!({})
+    };
+    if let Some(object) = effective.as_object_mut() {
+        object.remove("_active_project_root");
+    }
+    if base != "." {
+        effective["_active_project_root"] = Value::String(base.clone());
+    }
     if base == "." {
-        return args.clone();
+        return effective;
     }
 
-    let mut effective = args.clone();
     match name {
-        "exec_command" if effective.get("workdir").is_none() && effective.get("cwd").is_none() => {
-            effective["workdir"] = Value::String(base.clone());
+        "exec_command" => {
+            if let Some(workdir) = effective.get("workdir").and_then(Value::as_str) {
+                effective["workdir"] = Value::String(prefix_relative_path(&base, workdir));
+            } else if let Some(cwd) = effective.get("cwd").and_then(Value::as_str) {
+                effective["cwd"] = Value::String(prefix_relative_path(&base, cwd));
+            } else {
+                effective["workdir"] = Value::String(base.clone());
+            }
         }
-        "list_dir" | "list_files" | "git_status" | "git_log" => {
+        "list_dir" | "list_files" => {
             let path = effective.get("path").and_then(Value::as_str).unwrap_or(".");
             effective["path"] = Value::String(prefix_relative_path(&base, path));
         }
-        "read_file" | "search_text" | "grep_text" | "grep" | "git_blame" | "view_image" => {
+        "read_file" | "search_text" | "grep_text" | "grep" | "view_image" => {
             if let Some(path) = effective.get("path").and_then(Value::as_str) {
                 effective["path"] = Value::String(prefix_relative_path(&base, path));
-            }
-        }
-        "git_diff" => {
-            if let Some(path) = effective.get("path").and_then(Value::as_str) {
-                effective["path"] = Value::String(prefix_relative_path(&base, path));
-            }
-            if let Some(paths) = effective.get("paths").and_then(Value::as_array).cloned() {
-                effective["paths"] = Value::Array(
-                    paths
-                        .iter()
-                        .map(|path| {
-                            path.as_str()
-                                .map(|value| Value::String(prefix_relative_path(&base, value)))
-                                .unwrap_or_else(|| path.clone())
-                        })
-                        .collect(),
-                );
             }
         }
         "apply_patch" | "patch_check" => {

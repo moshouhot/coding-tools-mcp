@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::tools::workspace::Workspace;
 use crate::workspace::ActionsConfig;
 
-use super::registry::is_allowed_tool;
+use super::registry::is_actions_tool;
 use super::command_line::split_command;
 use super::exec_paths::{contains_external_path, resolve_workdir};
 
@@ -170,6 +170,21 @@ fn catastrophic_command_reason(
         return Some("refusing recursive deletion of the workspace root".into());
     }
 
+    let active_project_path = arguments
+        .get("_active_project_root")
+        .and_then(Value::as_str)
+        .and_then(|raw| workspace.resolve_existing(raw).ok())
+        .map(|resolved| resolved.path);
+    if let Some(project_root) = active_project_path.as_deref() {
+        let project_guard = normalize_guard_path(project_root);
+        if project_root != workspace.root()
+            && !project_guard.is_empty()
+            && recursive_delete_targets_guard_path(&normalized, &project_guard)
+        {
+            return Some("refusing recursive deletion of the active project root".into());
+        }
+    }
+
     #[cfg(windows)]
     if let Ok(system_root) = std::env::var("SystemRoot") {
         let system_root = normalize_guard_path(Path::new(&system_root));
@@ -191,13 +206,22 @@ fn catastrophic_command_reason(
         .or_else(|| arguments.get("cwd"))
         .and_then(Value::as_str)
         .unwrap_or(".");
-    let at_workspace_root = resolve_workdir(workspace, workdir)
+    let resolved_workdir = resolve_workdir(workspace, workdir)
         .ok()
-        .and_then(|resolved| resolved.path.canonicalize().ok())
-        .zip(workspace.root().canonicalize().ok())
+        .and_then(|resolved| resolved.path.canonicalize().ok());
+    let at_workspace_root = resolved_workdir
+        .as_ref()
+        .zip(workspace.root().canonicalize().ok().as_ref())
         .is_some_and(|(cwd, root)| cwd == root);
     if at_workspace_root && current_dir_delete_pattern().is_match(&normalized) {
         return Some("refusing recursive deletion of the workspace root".into());
+    }
+    let at_active_project_root = resolved_workdir
+        .as_ref()
+        .zip(active_project_path.as_ref())
+        .is_some_and(|(cwd, root)| cwd == root);
+    if at_active_project_root && current_dir_delete_pattern().is_match(&normalized) {
+        return Some("refusing recursive deletion of the active project root".into());
     }
 
     None
@@ -406,7 +430,7 @@ pub fn validate_tool_arguments_for_workspace(
 
 /// Actions OpenAPI 暴露层校验：仅限制「能否调用」，不参与执行逻辑。
 pub fn validate_actions_exposure(tool_name: &str) -> Result<(), PolicyError> {
-    if is_allowed_tool(tool_name) {
+    if is_actions_tool(tool_name) {
         Ok(())
     } else {
         Err(PolicyError(format!("Tool is not exposed: {tool_name}")))
