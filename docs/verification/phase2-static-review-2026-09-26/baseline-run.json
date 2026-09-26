@@ -1,0 +1,17 @@
+{
+  "head": "074994870b8565d192e37bc926cfafe02e8f5601",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--test",
+    "phase2_static_review",
+    "--",
+    "--include-ignored",
+    "--nocapture"
+  ],
+  "exit_code": 101,
+  "error": null,
+  "log_sha256": "e83b5a01822aba3074ac3bcedb0a99b3c750f8b0a9e377a223e91a16074dfac8",
+  "test_sha256": "e2b69838aaeea297de75b1d3d223385c1ff80c869c5d00d8cd92793766b071ac"
+}

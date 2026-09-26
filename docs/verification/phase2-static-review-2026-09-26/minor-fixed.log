@@ -1,0 +1,41 @@
+   Compiling coding-tools-mcp-desktop v0.2.4-custom.4 (F:\Nextcloud\project\coding-tools-mcp\src-tauri)
+warning: function `await_listener_shutdown_blocking` is never used
+   --> src\runtime\port.rs:206:8
+    |
+206 | pub fn await_listener_shutdown_blocking(handle: Option<JoinHandle<()>>, port: u16) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `drop_workspace` and `sync_stop_and_wait` are never used
+   --> src\runtime\supervisor.rs:97:12
+    |
+ 51 | impl RuntimeSupervisor {
+    | ---------------------- methods in this implementation
+...
+ 97 |     pub fn drop_workspace(&mut self, profile: &WorkspaceProfile) {
+    |            ^^^^^^^^^^^^^^
+...
+410 |     fn sync_stop_and_wait(&mut self, profile: &WorkspaceProfile, kind: ServiceKind) {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: `coding-tools-mcp-desktop` (lib) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.06s
+     Running tests\phase2_static_review.rs (target\debug\deps\phase2_static_review-fe865bf184403059.exe)
+
+running 13 tests
+test pending_evicted_binding_must_not_silently_read_a_different_project ... ignored, P1-BINDING-LOSS: inherited FIFO/fallback semantics require approval
+test pending_history_checkpoint_must_not_block_next_project_command ... ignored, P1-HISTORY-BASELINE: managed metadata / Harness baseline policy requires approval
+test pending_old_checkpoint_must_not_silently_write_to_another_project ... ignored, P1-HISTORY-TARGET: stable archive identity / switch lifecycle requires approval
+test project_selection_can_recover_after_project_directory_is_renamed ... ok
+test scoped_patch_preflight_does_not_write_any_project ... ok
+test missing_search_path_defaults_to_the_active_project ... ok
+test codex_delete_patch_uses_project_root_not_pool_root ... ok
+test codex_hunk_lines_that_look_like_unified_headers_are_unchanged ... ok
+test codex_paths_preserve_real_a_and_b_directories ... ok
+test codex_update_patch_uses_project_root_not_pool_root ... ok
+test codex_add_patch_uses_project_root_not_pool_root ... ok
+test unified_patch_transport_headers_and_plain_headers_are_both_scoped ... ok
+test scoped_patch_keeps_parent_traversal_rejected ... ok
+
+test result: ok. 10 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.11s

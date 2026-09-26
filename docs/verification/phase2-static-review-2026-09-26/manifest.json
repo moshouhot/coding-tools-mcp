@@ -1,0 +1,89 @@
+{
+  "baseline_commit": "074994870b8565d192e37bc926cfafe02e8f5601",
+  "source_fix_commit": "e19b24086635281b2398f035cb872bcd25af24c7",
+  "release_ready": false,
+  "pending_design_findings": 3,
+  "full_regression": {
+    "passed": 340,
+    "ignored": 3,
+    "exit_code": 0
+  },
+  "pending_explicit_run": {
+    "failed": 3,
+    "exit_code": 101
+  },
+  "sources": [
+    {
+      "path": "src-tauri/src/tools/dispatch.rs",
+      "representation": "git_blob",
+      "sha256": "57ca56c1c895e5c83b8430fc60878c9358c84209118d07a410f4825dfe5036f7"
+    },
+    {
+      "path": "src-tauri/src/tools/patch.rs",
+      "representation": "git_blob",
+      "sha256": "0511fb674ca3cdf2b8f438b878bb95d3980a12f381b38271a282ce9329392185"
+    },
+    {
+      "path": "src-tauri/tests/phase2_static_review.rs",
+      "representation": "git_blob",
+      "sha256": "81209a8069978d28b927dfda14d495142ee367f62db98fffe99be1eafb1ed370"
+    }
+  ],
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 75,
+      "sha256": "319ffc0becbbd17eba057a184078b8d59d40205cd646d15d3865614950a804f0"
+    },
+    {
+      "path": "baseline-raw.log",
+      "bytes": 6562,
+      "sha256": "e83b5a01822aba3074ac3bcedb0a99b3c750f8b0a9e377a223e91a16074dfac8"
+    },
+    {
+      "path": "baseline-run.json",
+      "bytes": 418,
+      "sha256": "5f808f77ab613b3be66aea5465440ac091cb10ca2c9768a128361af673736ae4"
+    },
+    {
+      "path": "frontend-check.log",
+      "bytes": 344,
+      "sha256": "60da422b63ceb34fa76ce2bdeb9b19bd0cf6d60aeab7a8502aabbdb94a248711"
+    },
+    {
+      "path": "full-regression-runs.json",
+      "bytes": 498,
+      "sha256": "850673de30e114acbf2e306718c3ebf8ad09cba154264460fd08688aac813df9"
+    },
+    {
+      "path": "full-regression.log",
+      "bytes": 29211,
+      "sha256": "1c2fcee112e60b5b61380ffcbe5a11d7697b28672643e27273f8759b6b6baf52"
+    },
+    {
+      "path": "impact-before.json",
+      "bytes": 12466,
+      "sha256": "ea50da91351c3a7b3e1039f253531cec442eac213b08d5c073c7e6da955c6960"
+    },
+    {
+      "path": "impact-staged.json",
+      "bytes": 1422,
+      "sha256": "e3f50835c3adcccccdf412d4924fe726d331af4ced0f9db33dc1d5bf7b31439e"
+    },
+    {
+      "path": "minor-fixed.log",
+      "bytes": 2369,
+      "sha256": "e9fcdd39845eb62f2a77e945c6de662e86249b1421e5a253a986415c7ca36c3c"
+    },
+    {
+      "path": "pending-design.log",
+      "bytes": 4577,
+      "sha256": "15b6fbf9a0e04299662c7801c03e758f420bd0f81d56fc35c8fdf76712cb7ebe"
+    },
+    {
+      "path": "review-runs.json",
+      "bytes": 524,
+      "sha256": "58a19922f2434c4726fa8a8a869170ae46151ef099639c1ce67929b3ae098875"
+    }
+  ]
+}

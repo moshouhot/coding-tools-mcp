@@ -1,0 +1,33 @@
+[
+  {
+    "file": "minor-fixed.log",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--test",
+      "phase2_static_review",
+      "--",
+      "--nocapture"
+    ],
+    "exit_code": 0,
+    "error": null
+  },
+  {
+    "file": "pending-design.log",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--test",
+      "phase2_static_review",
+      "pending_",
+      "--",
+      "--ignored",
+      "--test-threads=1",
+      "--nocapture"
+    ],
+    "exit_code": 101,
+    "error": null
+  }
+]

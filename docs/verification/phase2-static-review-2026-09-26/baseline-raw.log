@@ -1,0 +1,86 @@
+warning: function `await_listener_shutdown_blocking` is never used
+   --> src\runtime\port.rs:206:8
+    |
+206 | pub fn await_listener_shutdown_blocking(handle: Option<JoinHandle<()>>, port: u16) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `drop_workspace` and `sync_stop_and_wait` are never used
+   --> src\runtime\supervisor.rs:97:12
+    |
+ 51 | impl RuntimeSupervisor {
+    | ---------------------- methods in this implementation
+...
+ 97 |     pub fn drop_workspace(&mut self, profile: &WorkspaceProfile) {
+    |            ^^^^^^^^^^^^^^
+...
+410 |     fn sync_stop_and_wait(&mut self, profile: &WorkspaceProfile, kind: ServiceKind) {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: `coding-tools-mcp-desktop` (lib) generated 2 warnings
+   Compiling coding-tools-mcp-desktop v0.2.4-custom.4 (F:\Nextcloud\project\coding-tools-mcp\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.60s
+     Running tests\phase2_static_review.rs (target\debug\deps\phase2_static_review-fe865bf184403059.exe)
+
+running 8 tests
+P1-BINDING-LOSS state: {"active_project":"beta","ok":true,"project_root":"\\\\?
+thread 'project_selection_can_recover_after_project_directory_is_renamed' (2792) panicked at tests\phase2_static_review.rs:102:5:
+assertion `left == right` failed: recovery blocked by old project Harness: {"error":{"category":"permission","code":"WORKSPACE_UNAVAILABLE","details":{},"message":"系统找不到指定的文件。 (os error 2)","retryable":false},"ok":false,"status":"error","summary":"系统找不到指定的文件。 (os error 2)"}
+  left: Bool(false)
+ right: true
+\\note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+E:\\360data\\TEMP\\.tmpcQLf2O\\pool\\beta","session_scoped":true,"source":"default_cwd","workspace":"\\\\?\\E:\\360data\\TEMP\\.tmpcQLf2O\\pool"}; read: {"bytes_read":4,"content":"beta","encoding":"utf-8","end_line":1,"ok":true,"path":"beta/name.txt","start_line":1,"total_bytes":4,"total_lines":1,"truncated":false,"truncated_by":null,"warnings":[]}
+
+thread 'pending_evicted_binding_must_not_silently_read_a_different_project' (25272) panicked at tests\phase2_static_review.rs:158:5:
+expired Alpha binding silently read Beta
+
+thread 'missing_search_path_defaults_to_the_active_project' (26372) panicked at tests\phase2_static_review.rs:63:9:
+assertion `left == right` failed: search_text searched outside its default project
+  left: ["alpha/hit.txt", "beta/hit.txt", "pool.txt"]
+ right: ["alpha/hit.txt"]
+
+thread 'codex_delete_patch_uses_project_root_not_pool_root' (8732) panicked at tests\phase2_static_review.rs:91:5:
+pool file deleted
+
+thread 'codex_add_patch_uses_project_root_not_pool_root' (25440) panicked at tests\phase2_static_review.rs:72:5:
+patch wrote into the pool root
+test pending_evicted_binding_must_not_silently_read_a_different_project ... FAILED
+
+thread 'codex_update_patch_uses_project_root_not_pool_root' (18080) panicked at tests\phase2_static_review.rs:81:5:
+assertion `left == right` failed: pool file changed
+  left: "after\n"
+ right: "before\n"
+test codex_delete_patch_uses_project_root_not_pool_root ... FAILED
+test missing_search_path_defaults_to_the_active_project ... FAILED
+test project_selection_can_recover_after_project_directory_is_renamed ... FAILED
+test codex_add_patch_uses_project_root_not_pool_root ... FAILED
+test codex_update_patch_uses_project_root_not_pool_root ... FAILED
+P1-HISTORY-TARGET: {"archive_revision":"sha256:0fd3b609ea25baf5050b995150b683515cb076567058acbd07ba7f2e6195d462","content_hash":"508845a73b3fe5012c325fd6282014abed06b26936b077c37452f78ccbca4411","created":false,"duplicate_ignored":false,"expected_path":"docs/history-session/1.md","host_session_key_mismatch":false,"ok":true,"path":"docs/history-session/1.md","revision":1,"session_key":"review-chat","session_number":1,"state_revision":2,"supersedes":null,"turn_id":"auto-2a03fca046e01799","updated":true,"user_input_captured":true,"warnings":[]}
+
+thread 'pending_old_checkpoint_must_not_silently_write_to_another_project' (26324) panicked at tests\phase2_static_review.rs:125:5:
+stale Alpha target silently modified Beta history
+test pending_old_checkpoint_must_not_silently_write_to_another_project ... FAILED
+P1-HISTORY-BASELINE: {"error":{"category":"permission","code":"FILE_CHANGED_EXTERNALLY","details":{},"message":"工作区存在 Harness 未记录的外部文件变化","retryable":false},"harness":{"baseline_matches":false,"branch":null,"capabilities":{"exec":{"reason":"需要活动任务且工作区基线必须匹配","recoverable":true,"status":"denied"},"git":{"reason":"当前工作区不是可读取 Git 状态的仓库","recoverable":true,"status":"degraded"},"network":{"reason":"网络权限由工具策略控制，不由 Harness 任务状态决定","recoverable":true,"status":"managed_by_policy"},"read":{"reason":"工作区读取不依赖活动任务","recoverable":true,"status":"available"},"write":{"reason":"需要活动任务且工作区基线必须匹配","recoverable":true,"status":"denied"}},"head":null,"next_actions":["git_diff","read_file","git_status"],"reason":"工作区基线已变化，写入和执行已暂停","recoverable":true,"schema_version":1,"task_id":"19e25de3e1a448ce9d2e341e862ccb66","task_state":"active","task_updated_at":"1790394643822","workspace_id":"0793410c345d6e93c352147a9129d6fd","writable":false},"ok":false,"status":"error","summary":"工作区存在 Harness 未记录的外部文件变化"}
+
+thread 'pending_history_checkpoint_must_not_block_next_project_command' (22012) panicked at tests\phase2_static_review.rs:142:5:
+assertion `left == right` failed: our own History write invalidated the project task
+  left: Bool(false)
+ right: true
+test pending_history_checkpoint_must_not_block_next_project_command ... FAILED
+
+failures:
+
+failures:
+    codex_add_patch_uses_project_root_not_pool_root
+    codex_delete_patch_uses_project_root_not_pool_root
+    codex_update_patch_uses_project_root_not_pool_root
+    missing_search_path_defaults_to_the_active_project
+    pending_evicted_binding_must_not_silently_read_a_different_project
+    pending_history_checkpoint_must_not_block_next_project_command
+    pending_old_checkpoint_must_not_silently_write_to_another_project
+    project_selection_can_recover_after_project_directory_is_renamed
+
+test result: FAILED. 0 passed; 8 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+error: test failed, to rerun pass `--test phase2_static_review`

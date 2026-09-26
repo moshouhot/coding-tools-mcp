@@ -1,0 +1,54 @@
+warning: function `await_listener_shutdown_blocking` is never used
+   --> src\runtime\port.rs:206:8
+    |
+206 | pub fn await_listener_shutdown_blocking(handle: Option<JoinHandle<()>>, port: u16) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `drop_workspace` and `sync_stop_and_wait` are never used
+   --> src\runtime\supervisor.rs:97:12
+    |
+ 51 | impl RuntimeSupervisor {
+    | ---------------------- methods in this implementation
+...
+ 97 |     pub fn drop_workspace(&mut self, profile: &WorkspaceProfile) {
+    |            ^^^^^^^^^^^^^^
+...
+410 |     fn sync_stop_and_wait(&mut self, profile: &WorkspaceProfile, kind: ServiceKind) {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: `coding-tools-mcp-desktop` (lib) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.64s
+     Running tests\phase2_static_review.rs (target\debug\deps\phase2_static_review-fe865bf184403059.exe)
+
+running 3 tests
+test pending_evicted_binding_must_not_silently_read_a_different_project ... P1-BINDING-LOSS state: {"active_project":"beta","ok":true,"project_root":"\\\\?\\E:\\360data\\TEMP\\.tmprzwuo3\\pool\\beta","session_scoped":true,"source":"default_cwd","workspace":"\\\\?\\E:\\360data\\TEMP\\.tmprzwuo3\\pool"}; read: {"bytes_read":4,"content":"beta","encoding":"utf-8","end_line":1,"ok":true,"path":"beta/name.txt","start_line":1,"total_bytes":4,"total_lines":1,"truncated":false,"truncated_by":null,"warnings":[]}
+
+thread 'pending_evicted_binding_must_not_silently_read_a_different_project' (26356) panicked at tests\phase2_static_review.rs:212:5:
+expired Alpha binding silently read Beta
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test pending_history_checkpoint_must_not_block_next_project_command ... P1-HISTORY-BASELINE: {"error":{"category":"permission","code":"FILE_CHANGED_EXTERNALLY","details":{},"message":"工作区存在 Harness 未记录的外部文件变化","retryable":false},"harness":{"baseline_matches":false,"branch":null,"capabilities":{"exec":{"reason":"需要活动任务且工作区基线必须匹配","recoverable":true,"status":"denied"},"git":{"reason":"当前工作区不是可读取 Git 状态的仓库","recoverable":true,"status":"degraded"},"network":{"reason":"网络权限由工具策略控制，不由 Harness 任务状态决定","recoverable":true,"status":"managed_by_policy"},"read":{"reason":"工作区读取不依赖活动任务","recoverable":true,"status":"available"},"write":{"reason":"需要活动任务且工作区基线必须匹配","recoverable":true,"status":"denied"}},"head":null,"next_actions":["git_diff","read_file","git_status"],"reason":"工作区基线已变化，写入和执行已暂停","recoverable":true,"schema_version":1,"task_id":"72497245a4544c629ff130678550dffb","task_state":"active","task_updated_at":"1790394846522","workspace_id":"a53a47c29b282ea77e3dfc527da9c9da","writable":false},"ok":false,"status":"error","summary":"工作区存在 Harness 未记录的外部文件变化"}
+
+thread 'pending_history_checkpoint_must_not_block_next_project_command' (9564) panicked at tests\phase2_static_review.rs:196:5:
+assertion `left == right` failed: our own History write invalidated the project task
+  left: Bool(false)
+ right: true
+FAILED
+test pending_old_checkpoint_must_not_silently_write_to_another_project ... P1-HISTORY-TARGET: {"archive_revision":"sha256:7d4ffe4c60c4b41aa8b83f48dda07358fc3fe5cb0933eb22b58df6a72b570099","content_hash":"be086b95caace716aa2a8c99baa0901413f4ed628bb470e43b79a528aafe2ba0","created":false,"duplicate_ignored":false,"expected_path":"docs/history-session/1.md","host_session_key_mismatch":false,"ok":true,"path":"docs/history-session/1.md","revision":1,"session_key":"review-chat","session_number":1,"state_revision":2,"supersedes":null,"turn_id":"auto-2a03fca046e01799","updated":true,"user_input_captured":true,"warnings":[]}
+
+thread 'pending_old_checkpoint_must_not_silently_write_to_another_project' (6476) panicked at tests\phase2_static_review.rs:179:5:
+stale Alpha target silently modified Beta history
+FAILED
+
+failures:
+
+failures:
+    pending_evicted_binding_must_not_silently_read_a_different_project
+    pending_history_checkpoint_must_not_block_next_project_command
+    pending_old_checkpoint_must_not_silently_write_to_another_project
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.45s
+
+error: test failed, to rerun pass `--test phase2_static_review`

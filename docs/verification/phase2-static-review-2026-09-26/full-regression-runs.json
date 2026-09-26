@@ -1,0 +1,26 @@
+[
+  {
+    "file": "full-regression.log",
+    "command": [
+      "cargo",
+      "test",
+      "--locked"
+    ],
+    "exit_code": 0,
+    "error": null,
+    "sha256": "1c2fcee112e60b5b61380ffcbe5a11d7697b28672643e27273f8759b6b6baf52"
+  },
+  {
+    "file": "frontend-check.log",
+    "command": [
+      "cmd.exe",
+      "/d",
+      "/s",
+      "/c",
+      "npm run check"
+    ],
+    "exit_code": 0,
+    "error": null,
+    "sha256": "60da422b63ceb34fa76ce2bdeb9b19bd0cf6d60aeab7a8502aabbdb94a248711"
+  }
+]
