@@ -1,0 +1,2 @@
+# Keep the replayed probe bytes identical to probe_sha256 in receipt.json.
+probe.rs -text
