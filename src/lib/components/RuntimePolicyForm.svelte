@@ -25,7 +25,7 @@
   const PERMISSION_MODE_OPTIONS = [
     { value: "trusted", label: "受信任" },
     { value: "safe", label: "安全受限" },
-    { value: "dangerous", label: "开发者模式" },
+    { value: "dangerous", label: "完全放开" },
   ] as const;
 
   let { toolProfile, permissionMode, allowedCommands, workspaceLocalEntries, workspaceScriptExtensions, onSave }: Props = $props();
@@ -79,7 +79,7 @@
     </select>
   </label>
   <label class="grid gap-1">
-    <span class="text-xs text-[var(--color-text-muted)]">系统命令（Safe / Trusted 白名单，开发者模式忽略）</span>
+    <span class="text-xs text-[var(--color-text-muted)]">系统命令（安全受限 / 受信任使用白名单，完全放开时忽略）</span>
     <input type="text" class="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 font-mono text-sm" placeholder="python,git,curl,powershell,..." bind:value={draftCommands} />
   </label>
   <label class="flex items-center gap-2 text-sm">
@@ -102,7 +102,7 @@
     </select>
   </label>
   <p class="text-xs text-[var(--color-text-muted)]">
-    开发者模式基本允许本机命令执行，仅保留磁盘清空、系统根目录清空和整个 Workspace 根目录递归删除等灾难性保护。当前执行边界仍为 policy_only。
+    完全放开模式基本允许本机命令执行，仅保留磁盘清空、系统根目录清空和整个 Workspace 根目录递归删除等灾难性保护。当前执行边界仍为 policy_only。
   </p>
   <div class="flex justify-end pt-1">
     <button

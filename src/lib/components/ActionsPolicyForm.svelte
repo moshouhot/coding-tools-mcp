@@ -17,7 +17,7 @@
   const PERMISSION_MODE_OPTIONS = [
     { value: "trusted", label: "受信任" },
     { value: "safe", label: "安全受限" },
-    { value: "dangerous", label: "开发者模式" },
+    { value: "dangerous", label: "完全放开" },
   ] as const;
 
   let { allowedCommands, maxPatchBytes, permissionMode, onSave }: Props = $props();
@@ -62,7 +62,7 @@
   }}
 >
   <label class="grid gap-1">
-    <span class="text-xs text-[var(--color-text-muted)]">允许命令（Safe / Trusted 白名单，开发者模式忽略）</span>
+    <span class="text-xs text-[var(--color-text-muted)]">允许命令（安全受限 / 受信任使用白名单，完全放开时忽略）</span>
     <input
       type="text"
       class="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5 font-mono text-sm"
@@ -92,7 +92,7 @@
     </select>
   </label>
   <p class="text-xs text-[var(--color-text-muted)]">
-    作用于 Actions gateway。开发者模式基本允许本机命令执行，仅保留灾难性保护；Patch 大小限制仍独立生效。
+    作用于 Actions gateway。完全放开模式基本允许本机命令执行，仅保留灾难性保护；Patch 大小限制仍独立生效。
   </p>
   <div class="flex justify-end pt-1">
     <button
