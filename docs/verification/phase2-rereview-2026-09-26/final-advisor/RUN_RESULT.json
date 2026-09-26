@@ -1,0 +1,60 @@
+{
+  "task_id": "final-advisor",
+  "runner_status": "COMPLETED",
+  "timeout_kind": null,
+  "pi_exit_code": 0,
+  "forensics_invocation_id": "82732346c80d47aba7bba72a8fcc1820",
+  "supervisor_pid": 19820,
+  "supervisor_ppid": 8364,
+  "worker_pid": 2772,
+  "duration_seconds": 41.344,
+  "elapsed_seconds": 41.344,
+  "idle_seconds": 0.25,
+  "idle_timeout_seconds": 90,
+  "hard_timeout_seconds": 180,
+  "last_activity_at": "2026-09-26T05:49:00.730983+00:00",
+  "last_activity_source": "pi_json_event",
+  "last_event_type": "agent_settled",
+  "last_tool_name": "write",
+  "last_progress": "agent_settled",
+  "started_at": "2026-09-26T05:48:19.642285+00:00",
+  "finished_at": "2026-09-26T05:49:00.977444+00:00",
+  "project_root": "F:\\Nextcloud\\project\\coding-tools-mcp",
+  "task_file": "F:\\Nextcloud\\project\\coding-tools-mcp\\docs\\verification\\phase2-rereview-2026-09-26\\final-advisor\\TASK.md",
+  "worker": {
+    "provider": "本地4.1",
+    "model": "deepseek-v4.1-flash",
+    "thinking": "high"
+  },
+  "report_exists": true,
+  "worker_result_exists": true,
+  "worker_result_valid": true,
+  "worker_result_error": null,
+  "exit_forensics": {
+    "forensics_file": "EXIT_FORENSICS.jsonl",
+    "preload_active": true,
+    "worker_pid": 2772,
+    "guard_started": true,
+    "terminal_guard_evidence": true,
+    "js_exit_requested": false,
+    "js_exit_code": null,
+    "uncaught_exception_observed": false,
+    "supervisor_terminate_observed": false,
+    "supervisor_termination_attempts": [],
+    "foreign_guard_records_ignored": 0,
+    "worker_exit_code_raw": 0,
+    "worker_exit_code_normalized": {
+      "value": 0,
+      "normalized": true,
+      "raw": 0,
+      "unsigned_32": 0,
+      "signed_32": 0,
+      "hex": "0x00000000"
+    },
+    "termination_classification": "normal_completion",
+    "classification_reasons": [
+      "guard started and the worker exited with code 0"
+    ],
+    "record_count": 7
+  }
+}

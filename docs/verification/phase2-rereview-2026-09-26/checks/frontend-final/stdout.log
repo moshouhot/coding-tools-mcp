@@ -1,0 +1,9 @@
+
+> coding-tools-mcp-desktop@0.2.4-custom.5 check
+> svelte-kit sync && svelte-check --tsconfig ./tsconfig.json
+
+Loading svelte-check in workspace: f:\Nextcloud\project\coding-tools-mcp
+Getting Svelte diagnostics...
+
+[32msvelte-check found 0 errors and 0 warnings
+[39m

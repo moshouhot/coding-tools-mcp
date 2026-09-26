@@ -1,0 +1,27 @@
+Changes: 5 files, 14 symbols
+Affected processes: 6
+Risk level: high
+
+Changed symbols:
+  Symbol Get started in five minutes → README.en.md
+  Symbol 5. Connect an AI client → README.en.md
+  Symbol Two ways to connect ChatGPT → README.en.md
+  Symbol 五分钟开始使用 → README.md
+  Symbol 5. 连接 AI 客户端 → README.md
+  Symbol Coding Tools MCP Rust - 项目上下文 → docs/project-context.md
+  Symbol 项目概览 → docs/project-context.md
+  Symbol 快速开始 → docs/project-context.md
+  Symbol 架构设计 → docs/project-context/architecture.md
+  Symbol 当前状态 → docs/project-context/architecture.md
+  Symbol 核心模块 → docs/project-context/architecture.md
+  Symbol mcp/ → docs/project-context/architecture.md
+  Symbol 入口文件 → docs/project-context/architecture.md
+  Symbol call_tool_prepared → src-tauri/src/tools/dispatch.rs
+
+Affected execution flows:
+  • Spawn_listener → Has_session_active_project (7 steps) — changed: call_tool_prepared
+  • Call_tool_prepared → Root (4 steps) — changed: call_tool_prepared
+  • Call_tool_prepared → New (4 steps) — changed: call_tool_prepared
+  • Call_tool_prepared → Workspace_id (4 steps) — changed: call_tool_prepared
+  • Call_tool_prepared → Skip_permission_gates (4 steps) — changed: call_tool_prepared
+  • Call_tool_prepared → Shell_syntax_allowed (4 steps) — changed: call_tool_prepared

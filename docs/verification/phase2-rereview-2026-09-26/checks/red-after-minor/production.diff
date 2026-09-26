@@ -1,0 +1,22 @@
+diff --git a/src-tauri/src/tools/dispatch.rs b/src-tauri/src/tools/dispatch.rs
+index f92b240..e492bca 100644
+--- a/src-tauri/src/tools/dispatch.rs
++++ b/src-tauri/src/tools/dispatch.rs
+@@ -208,7 +208,7 @@ fn call_tool_prepared(
+                     "constraints": {
+                         "mode": "dangerous",
+                         "workspace": ctx.workspace.root_display(),
+-                        "requested": effective_args
++                        "requested": strip_internal_context(effective_args.clone())
+                     },
+                     "warnings": [
+                         "dangerous permission mode is enabled; permission-gated operations are auto-granted"
+@@ -226,7 +226,7 @@ fn call_tool_prepared(
+                         "message": "Permission elicitation is not available for this client.",
+                         "category": "permission",
+                         "retryable": false,
+-                        "details": { "requested": effective_args }
++                        "details": { "requested": strip_internal_context(effective_args.clone()) }
+                     }
+                 })))
+             }

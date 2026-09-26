@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Bounded subprocess runner for the Phase 2 re-review probes.
+
+Captures raw stdout/stderr, the real exit code, the command, and the current
+baseline SHA into the sibling repro/ directory. Uses subprocess (no shell
+pipelines) so exit codes are the real process codes.
+"""
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]  # repo root
+REPRO = ROOT / "docs/verification/phase2-rereview-2026-09-26/repro"
+LOGS = REPRO / "logs"
+LOGS.mkdir(parents=True, exist_ok=True)
+
+
+def run(name: str, args, cwd: Path, timeout: int):
+    log = LOGS / f"{name}.log"
+    started = time.time()
+    with open(log, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(f"# command: {' '.join(str(a) for a in args)}\n")
+        handle.write(f"# cwd: {cwd}\n")
+        handle.write(f"# timeout_s: {timeout}\n\n")
+        handle.flush()
+        try:
+            proc = subprocess.run(
+                [str(a) for a in args],
+                cwd=str(cwd),
+                stdout=handle,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+            )
+            exit_code = proc.returncode
+            timed_out = False
+        except subprocess.TimeoutExpired:
+            exit_code = None
+            timed_out = True
+    elapsed = round(time.time() - started, 2)
+    return {
+        "name": name,
+        "command": [str(a) for a in args],
+        "cwd": str(cwd),
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "elapsed_s": elapsed,
+        "log": str(log.relative_to(ROOT)).replace("\\", "/"),
+    }
+
+
+if __name__ == "__main__":
+    spec = json.loads(sys.argv[1])
+    results = []
+    for item in spec:
+        results.append(
+            run(item["name"], item["args"], Path(item["cwd"]), item["timeout"])
+        )
+    print(json.dumps(results, indent=2))

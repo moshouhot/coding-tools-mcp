@@ -1,0 +1,6 @@
+# Preserve evidence bytes; never trim or normalize captured process output.
+*.log -text -diff
+*.diff -text -diff
+advisor/run_probe-original.py.txt -text -diff
+*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+*.jsonl -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

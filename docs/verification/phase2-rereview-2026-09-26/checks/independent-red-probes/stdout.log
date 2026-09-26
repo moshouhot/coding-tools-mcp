@@ -1,0 +1,22 @@
+
+running 7 tests
+test safe_bound_project_replaced_by_inpool_symlink_fails_closed ... FAILED
+test safe_lost_binding_does_not_silently_fall_back_after_repair_restart ... FAILED
+test safe_readonly_history_dir_must_not_exempt_real_code_from_baseline ... FAILED
+test safe_readonly_history_search_works_with_unwritable_metadata_store ... FAILED
+test safe_root_active_project_keeps_custom_history_exclusion ... FAILED
+test safe_two_contexts_keep_each_others_durable_bindings ... FAILED
+test vuln_confirmation_lost_session_reads_default_project_after_repair_restart ... ok
+
+failures:
+
+failures:
+    safe_bound_project_replaced_by_inpool_symlink_fails_closed
+    safe_lost_binding_does_not_silently_fall_back_after_repair_restart
+    safe_readonly_history_dir_must_not_exempt_real_code_from_baseline
+    safe_readonly_history_search_works_with_unwritable_metadata_store
+    safe_root_active_project_keeps_custom_history_exclusion
+    safe_two_contexts_keep_each_others_durable_bindings
+
+test result: FAILED. 1 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+

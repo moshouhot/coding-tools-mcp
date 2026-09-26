@@ -1,0 +1,18 @@
+{
+  "verdict": "hold",
+  "small_fix_approved": true,
+  "major_findings_require_user_approval": [
+    "Persistent recovery/quarantine for corrupt or lost Active Project bindings plus transactional writes to the shared binding store (avoid whole-map lost updates across contexts/processes).",
+    "History directory ownership and read-only separation so read-only History search does not require metadata write access, plus root-Active-Project scope parity so custom exclusions do not weaken the real-code baseline.",
+    "Rejection of changed canonical binding targets (e.g. in-pool symlink replacement) instead of silently following the new target."
+  ],
+  "limitations": [
+    "Read-only, time-bounded review: only the three files named in TASK.md were read; no shell, cargo, git, discovery, filesystem scans, installs or skills were run.",
+    "The small fix (strip_internal_context on request_permissions echoes) is a low-risk internal-key leak fix and does not address any of the six failing probes; post-fix test results were not available and are not claimed.",
+    "History source code (history.rs) was not provided, so findings about history_dir exemptions and metadata-write coupling rest on stderr.log only and need reproduction by the main agent.",
+    "Two ToolContext instances writing sequentially is not equivalent to two chats inside one shared context; the lost-update pattern is real but its production likelihood depends on multi-writer deployment.",
+    "The symlink retarget probe requires a local filesystem change (replacing a symlink), not a remote-only attack.",
+    "The prior advisor run's filesystem search timed out; that run must not be recorded as successful and no full-repo audit is claimed.",
+    "No claim of final Codex acceptance is made."
+  ]
+}

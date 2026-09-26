@@ -1,0 +1,20 @@
+{
+  "reason": "Original advisor runner used an incorrect repo-root parent and placed logs in a nested evidence directory. All moved log bytes verified identical; original runner preserved as run_probe-original.py.txt.",
+  "moves": [
+    {
+      "from": "docs\\verification\\phase2-rereview-2026-09-26\\docs\\verification\\phase2-rereview-2026-09-26\\repro\\logs\\compile_probe.log",
+      "to": "docs\\verification\\phase2-rereview-2026-09-26\\repro\\logs\\compile_probe.log",
+      "sha256": "86ffa92845477a1dff93261b364d94f1ac3b953038d8de1d6b69420170154e3d"
+    },
+    {
+      "from": "docs\\verification\\phase2-rereview-2026-09-26\\docs\\verification\\phase2-rereview-2026-09-26\\repro\\logs\\compile_probe2.log",
+      "to": "docs\\verification\\phase2-rereview-2026-09-26\\repro\\logs\\compile_probe2.log",
+      "sha256": "99a3d81147f96300ae03fd74c81ebe66e733ae48ae12526b9d63acc618a5c4df"
+    },
+    {
+      "from": "docs\\verification\\phase2-rereview-2026-09-26\\docs\\verification\\phase2-rereview-2026-09-26\\repro\\logs\\probe_all.log",
+      "to": "docs\\verification\\phase2-rereview-2026-09-26\\repro\\logs\\probe_all.log",
+      "sha256": "025968f8494f8f88512e1b0ef50bc70d28243ff4c26b252d622e41976e5f5b4a"
+    }
+  ]
+}
