@@ -254,7 +254,9 @@ fn parse_codex_patch(patch: &str) -> Result<Vec<FilePatch>, WorkspaceError> {
         if let Some((path, is_new_file, is_deleted)) = header {
             finish_codex_file(&mut files, &mut current, &mut current_hunk);
             current = Some(FilePatch {
-                path: parse_diff_path(path),
+                // Codex envelope paths are literal, not unified-diff a/ or b/
+                // transport paths. Preserve real directories with those names.
+                path: path.trim().replace('\\', "/"),
                 hunks: Vec::new(),
                 is_new_file,
                 is_deleted,

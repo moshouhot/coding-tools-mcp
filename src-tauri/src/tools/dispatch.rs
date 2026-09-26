@@ -64,6 +64,19 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
         return policy_tool_err(e);
     }
 
+    // Project selection and diagnostics must remain usable when the previously
+    // selected directory was moved/deleted. They do not depend on its Harness.
+    let management_result = match name {
+        "server_info" => Some(server_info(ctx)),
+        "get_active_project" => Some(project::get_active_project(ctx, &effective_args)),
+        "set_active_project" => Some(project::set_active_project(ctx, &effective_args)),
+        "discover_projects" => Some(project::discover_projects(ctx, &effective_args)),
+        _ => None,
+    };
+    if let Some(result) = management_result {
+        return result.unwrap_or_else(tool_err);
+    }
+
     let harness = match ctx.harness_for_session(project::host_session_key(&effective_args)) {
         Ok(harness) => harness,
         Err(error) => {
@@ -126,14 +139,10 @@ pub fn call_tool(ctx: &ToolContext, name: &str, args: &Value) -> Value {
         "history_session_validate" => history::validate(ctx, &effective_args),
         "history_session_search" => history::search(ctx, &effective_args),
         "history_session_read" => history::read(ctx, &effective_args),
-        "server_info" => server_info(ctx),
         "check_exec_environment" => check_exec_environment(ctx),
         "exec_health_check" => exec::exec_health_check(ctx),
         "get_default_cwd" => get_default_cwd(ctx),
         "set_default_cwd" => set_default_cwd(ctx, &effective_args),
-        "get_active_project" => project::get_active_project(ctx, &effective_args),
-        "set_active_project" => project::set_active_project(ctx, &effective_args),
-        "discover_projects" => project::discover_projects(ctx, &effective_args),
         "read_file" => file::read_file(ws, &effective_args),
         "list_dir" => file::list_dir(ws, &effective_args),
         "list_files" => file::list_files(ws, &effective_args),
@@ -345,11 +354,11 @@ fn apply_default_cwd(ctx: &ToolContext, name: &str, args: &Value) -> Value {
                 effective["workdir"] = Value::String(base.clone());
             }
         }
-        "list_dir" | "list_files" => {
+        "list_dir" | "list_files" | "search_text" | "grep_text" | "grep" => {
             let path = effective.get("path").and_then(Value::as_str).unwrap_or(".");
             effective["path"] = Value::String(prefix_relative_path(&base, path));
         }
-        "read_file" | "search_text" | "grep_text" | "grep" | "view_image" => {
+        "read_file" | "view_image" => {
             if let Some(path) = effective.get("path").and_then(Value::as_str) {
                 effective["path"] = Value::String(prefix_relative_path(&base, path));
             }
@@ -375,12 +384,32 @@ fn prefix_relative_path(base: &str, path: &str) -> String {
 }
 
 fn prefix_patch_paths(base: &str, patch: &str) -> String {
+    let codex_format = patch.lines().any(|line| line == "*** Begin Patch");
     patch
         .lines()
         .map(|line| {
-            for marker in ["--- a/", "+++ b/"] {
-                if let Some(path) = line.strip_prefix(marker) {
-                    return format!("{marker}{base}/{path}");
+            if codex_format {
+                for marker in ["*** Add File: ", "*** Update File: ", "*** Delete File: "] {
+                    if let Some(path) = line.strip_prefix(marker) {
+                        return format!("{marker}{}", prefix_relative_path(base, path.trim()));
+                    }
+                }
+            } else {
+                for (marker, transport_prefix) in [("--- ", "a/"), ("+++ ", "b/")] {
+                    if let Some(raw) = line.strip_prefix(marker) {
+                        let raw = raw.trim();
+                        if raw == "/dev/null" {
+                            return line.to_string();
+                        }
+                        let path = raw
+                            .strip_prefix("a/")
+                            .or_else(|| raw.strip_prefix("b/"))
+                            .unwrap_or(raw);
+                        return format!(
+                            "{marker}{transport_prefix}{}",
+                            prefix_relative_path(base, path)
+                        );
+                    }
                 }
             }
             line.to_string()
