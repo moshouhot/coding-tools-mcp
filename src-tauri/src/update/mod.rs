@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::time::Duration;
 
+use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
@@ -40,27 +41,13 @@ pub fn normalize_tag(tag: &str) -> String {
     without_v.trim().to_string()
 }
 
-/// Compare two semver-like strings (major.minor.patch[+pre]).
-/// Returns None when either side cannot be parsed as numeric major.minor.patch.
+/// Compare two semantic versions using SemVer precedence rules.
+/// Build metadata is ignored for precedence; pre-release identifiers sort below
+/// the corresponding final release (for example, 0.2.4-custom.1 < 0.2.4).
 pub fn compare_versions(left: &str, right: &str) -> Option<Ordering> {
-    let left_parts = parse_version_tuple(&normalize_tag(left))?;
-    let right_parts = parse_version_tuple(&normalize_tag(right))?;
-    Some(left_parts.cmp(&right_parts))
-}
-
-fn parse_version_tuple(version: &str) -> Option<(u64, u64, u64)> {
-    let core = version.split(['-', '+']).next().unwrap_or(version).trim();
-    if core.is_empty() {
-        return None;
-    }
-    let mut parts = core.split('.');
-    let major = parts.next()?.parse::<u64>().ok()?;
-    let minor = parts.next().unwrap_or("0").parse::<u64>().ok()?;
-    let patch = parts.next().unwrap_or("0").parse::<u64>().ok()?;
-    if parts.next().is_some() {
-        // Extra numeric segments are ignored for comparison stability.
-    }
-    Some((major, minor, patch))
+    let left_version = Version::parse(&normalize_tag(left)).ok()?;
+    let right_version = Version::parse(&normalize_tag(right)).ok()?;
+    Some(left_version.cmp_precedence(&right_version))
 }
 
 pub fn parse_latest_release(body: &str, current_version: &str) -> AppResult<UpdateCheckResult> {
@@ -182,7 +169,31 @@ mod tests {
             Some(Ordering::Less)
         );
         assert_eq!(compare_versions("1.0.0", "0.9.9"), Some(Ordering::Greater));
+        assert_eq!(
+            compare_versions("0.2.4-custom.1", "0.2.4"),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            compare_versions("0.2.4-custom.2", "0.2.4-custom.1"),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            compare_versions("0.2.4+local", "0.2.4+upstream"),
+            Some(Ordering::Equal)
+        );
         assert!(compare_versions("latest", "0.1.0").is_none());
+    }
+
+    #[test]
+    fn parse_latest_detects_final_release_after_custom_prerelease() {
+        let body = r#"{
+            "tag_name": "v0.2.4",
+            "html_url": "https://github.com/mybolide/coding-tools-mcp/releases/tag/v0.2.4"
+        }"#;
+        let result = parse_latest_release(body, "0.2.4-custom.1").expect("parse");
+        assert!(result.update_available);
+        assert_eq!(result.current_version, "0.2.4-custom.1");
+        assert_eq!(result.latest_version, "0.2.4");
     }
 
     #[test]

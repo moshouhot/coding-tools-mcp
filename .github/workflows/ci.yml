@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches:
-      - "feat/permissive-exec-policy"
+      - "custom/main"
   workflow_dispatch:
     inputs:
       windows_only:

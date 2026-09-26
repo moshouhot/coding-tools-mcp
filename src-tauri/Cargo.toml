@@ -1,6 +1,6 @@
 [package]
 name = "coding-tools-mcp-desktop"
-version = "0.2.4-dev.1"
+version = "0.2.4-custom.1"
 description = "Coding Tools MCP desktop client"
 authors = ["Coding Tools MCP Contributors"]
 edition = "2021"
@@ -26,6 +26,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 walkdir = "2"
 regex = "1"
+semver = "1"
 glob = "0.3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 base64 = "0.22"
