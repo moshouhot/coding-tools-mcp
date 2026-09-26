@@ -208,7 +208,7 @@ fn call_tool_prepared(
                     "constraints": {
                         "mode": "dangerous",
                         "workspace": ctx.workspace.root_display(),
-                        "requested": effective_args
+                        "requested": strip_internal_context(effective_args.clone())
                     },
                     "warnings": [
                         "dangerous permission mode is enabled; permission-gated operations are auto-granted"
@@ -226,7 +226,7 @@ fn call_tool_prepared(
                         "message": "Permission elicitation is not available for this client.",
                         "category": "permission",
                         "retryable": false,
-                        "details": { "requested": effective_args }
+                        "details": { "requested": strip_internal_context(effective_args.clone()) }
                     }
                 })))
             }

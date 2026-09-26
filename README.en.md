@@ -70,6 +70,8 @@ Active Project state is scoped to the host conversation, so several Codex conver
 
 > Starting with `0.2.4-custom.5`, History / Harness become project-aware when a Session Active Project is bound: History defaults to that project's own `docs/history-session` and checkpoints validate project identity; Harness tasks, baselines, and operation logs use a project-specific identity while excluding History directories managed by Coding Tools MCP. Session → Active Project bindings are persisted locally and restored after restart; if a bound project becomes unavailable, the server fails explicitly instead of silently falling back to another project. Without a Session Active Project, the previous Workspace Pool fallback remains intact and existing data is not migrated or rewritten automatically.
 
+> Candidate status: the second `.5` review found recovery and directory-ownership edge-case defects. The behavior summary above is not a complete acceptance guarantee. Live acceptance is on hold; see the [re-review report](docs/verification/phase2-rereview-2026-09-26/REPORT.md).
+
 ### 3. Configure a public tunnel
 
 When the AI client is not running on the same machine, expose MCP through HTTPS:
@@ -111,17 +113,19 @@ When a connection fails, inspect recent MCP requests without leaving the desktop
 
 Use the public MCP URL shown by the app. With OAuth enabled, the client follows the server metadata into the authorization flow; authorization codes, Client IDs, and secrets can be generated and managed from the desktop client. This release uses preconfigured OAuth clients, so select static/manual OAuth credentials when creating a ChatGPT plugin; CIMD is not required.
 
-For a first connection, ask the agent to initialize history before inspecting the workspace:
+On first connection, bind the conversation's Active Project before initializing History when the user has explicitly identified a project. Preserve workspace-level fallback only when no project is selected:
 
 ```text
+set_active_project (when the user has explicitly identified a project)
 history_session_bootstrap
 server_info
 get_default_cwd
+get_active_project
 git_status
 check_exec_environment
 ```
 
-This gives the agent explicit project and capability state instead of guessing from the current chat window.
+Preserve `session_key`, `current_path`, and `project_id` from bootstrap and pass them unchanged to checkpoints (`current_path` becomes `expected_path`). After an explicit project switch in the same conversation, bootstrap/resume History for the new project instead of reusing the old target. This gives the agent explicit project and capability state instead of guessing from the current chat window.
 
 ## Two ways to connect ChatGPT
 
