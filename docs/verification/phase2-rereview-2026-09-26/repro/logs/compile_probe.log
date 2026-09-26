@@ -1,0 +1,49 @@
+# command: cargo test --locked --test phase2_rereview_probe --no-run
+# cwd: src-tauri
+# timeout_s: 900
+
+   Compiling coding-tools-mcp-desktop v0.2.4-custom.5 (F:\Nextcloud\project\coding-tools-mcp\src-tauri)
+warning: function `await_listener_shutdown_blocking` is never used
+   --> src\runtime\port.rs:206:8
+    |
+206 | pub fn await_listener_shutdown_blocking(handle: Option<JoinHandle<()>>, port: u16) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `drop_workspace` and `sync_stop_and_wait` are never used
+   --> src\runtime\supervisor.rs:97:12
+    |
+ 51 | impl RuntimeSupervisor {
+    | ---------------------- methods in this implementation
+...
+ 97 |     pub fn drop_workspace(&mut self, profile: &WorkspaceProfile) {
+    |            ^^^^^^^^^^^^^^
+...
+410 |     fn sync_stop_and_wait(&mut self, profile: &WorkspaceProfile, kind: ServiceKind) {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: `coding-tools-mcp-desktop` (lib) generated 2 warnings
+warning: field `harness` is never read
+  --> tests\phase2_rereview_probe.rs:23:5
+   |
+20 | struct Fixture {
+   |        ------- field in this struct
+...
+23 |     harness: PathBuf,
+   |     ^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `bootstrap` is never used
+  --> tests\phase2_rereview_probe.rs:59:8
+   |
+27 | impl Fixture {
+   | ------------ method in this implementation
+...
+59 |     fn bootstrap(&self, input: &str) -> Value {
+   |        ^^^^^^^^^
+
+warning: `coding-tools-mcp-desktop` (test "phase2_rereview_probe") generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.55s
+  Executable tests\phase2_rereview_probe.rs (target\debug\deps\phase2_rereview_probe-98ee4af2e4484f84.exe)

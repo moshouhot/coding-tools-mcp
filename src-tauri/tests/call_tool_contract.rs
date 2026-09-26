@@ -33,7 +33,7 @@ fn explicit_relative_exec_workdir_is_resolved_from_active_project() {
     assert_ok(&invoke(
         &ctx,
         "set_active_project",
-        json!({"path": "project-a", "_host_session_key": "session-a"}),
+        json!({"path": "project-a", "allow_rebind": true, "_host_session_key": "session-a"}),
     ));
 
     let root = invoke(
@@ -238,7 +238,7 @@ fn history_archives_follow_session_active_project_and_remain_isolated() {
     assert_ok(&invoke(
         &ctx,
         "set_active_project",
-        json!({"path": "project-a", "_host_session_key": "session-a"}),
+        json!({"path": "project-a", "allow_rebind": true, "_host_session_key": "session-a"}),
     ));
     assert_ok(&invoke(
         &ctx,
@@ -331,7 +331,7 @@ fn harness_tasks_are_scoped_to_active_project_identity() {
     assert_ok(&invoke(
         &ctx,
         "set_active_project",
-        json!({"path": "project-a", "_host_session_key": "session-a"}),
+        json!({"path": "project-a", "allow_rebind": true, "_host_session_key": "session-a"}),
     ));
     assert_ok(&invoke(
         &ctx,
@@ -371,7 +371,7 @@ fn harness_tasks_are_scoped_to_active_project_identity() {
     assert_ok(&invoke(
         &ctx,
         "set_active_project",
-        json!({"path": "project-b", "_host_session_key": "session-a"}),
+        json!({"path": "project-b", "allow_rebind": true, "_host_session_key": "session-a"}),
     ));
     let switched = invoke(
         &ctx,
@@ -383,7 +383,7 @@ fn harness_tasks_are_scoped_to_active_project_identity() {
     assert_ok(&invoke(
         &ctx,
         "set_active_project",
-        json!({"path": "project-a", "_host_session_key": "session-a"}),
+        json!({"path": "project-a", "allow_rebind": true, "_host_session_key": "session-a"}),
     ));
     let restored = invoke(
         &ctx,

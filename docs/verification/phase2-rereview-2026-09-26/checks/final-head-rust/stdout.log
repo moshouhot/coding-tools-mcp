@@ -1,0 +1,407 @@
+
+running 240 tests
+test access_log::tests::combined_line_matches_nginx_shape ... ok
+test access_log::tests::unsafe_bytes_are_escaped_without_breaking_the_line ... ok
+test access_log::tests::parser_ignores_non_access_logs ... ok
+test actions::openapi::tests::openapi_without_auth_has_no_security_scheme ... ok
+test actions::openapi::tests::openapi_api_key_includes_bearer_security ... ok
+test audit::grep_outcome::tests::runtime_errors_rejections_and_other_exit_one_commands_remain_errors ... ok
+test audit::grep_outcome::tests::session_identity_is_scoped_and_unknown_sessions_are_conservative ... ok
+test audit::tests::cloudflare_without_connecting_ip_uses_xff_tail ... ok
+test audit::tests::cloudflare_prefers_connecting_ip_over_xff ... ok
+test actions::listener::tests::bind_listener_reports_port_conflict_synchronously ... ok
+test audit::grep_outcome::tests::remembered_session_types_have_a_fixed_upper_bound ... ok
+test audit::tests::custom_forwarded_ip_is_not_used_as_a_proxy_header ... ok
+test audit::tests::detail_capture_keeps_valid_json_when_truncated ... ok
+test audit::tests::detail_capture_supports_unlimited_and_disabled_modes ... ok
+test actions::openapi::tests::core_openapi_exposes_grep_text_as_read_only ... ok
+test audit::tests::forwarded_ipv6_keeps_the_complete_address ... ok
+test access_log::tests::access_log_query_filters_status_before_limit ... ok
+test access_log::tests::workspace_log_cleanup_removes_only_the_exact_workspace_directory ... ok
+test access_log::tests::access_log_query_keeps_the_latest_hundred_same_second_records ... ok
+test access_log::tests::access_log_query_merges_workspaces_and_keeps_full_stats ... ok
+test audit::tests::request_id_keeps_string_values_unquoted ... ok
+test access_log::tests::daily_retention_keeps_requested_number_of_dates ... ok
+test access_log::tests::clearing_logs_truncates_files_and_keeps_active_writers_usable ... ok
+test audit::tests::successful_kill_session_is_not_an_audit_failure ... ok
+test auth::bearer::tests::accepts_valid_bearer_token ... ok
+test auth::bearer::tests::rejects_missing_or_invalid_bearer_token ... ok
+test auth::oauth::tests::authorization_metadata_includes_token_auth_methods ... ok
+test auth::oauth::tests::external_base_url_prefers_configured_url ... ok
+test auth::oauth::tests::external_base_url_uses_forwarded_host ... ok
+test auth::oauth::tests::external_base_url_uses_host_header ... ok
+test auth::oauth::tests::oauth_enabled_only_for_oauth_type ... ok
+test auth::oauth::tests::protected_resource_metadata_lists_authorization_servers ... ok
+test auth::oauth_flow::tests::pkce_round_trip ... ok
+test auth::oauth_flow::tests::token_exchange_without_client_secret ... ok
+test data::store::tests::binding_rollback_can_restore_deleted_workspace_id ... ok
+test data::store::tests::binding_write_keeps_new_value_when_persist_succeeds ... ok
+test data::store::tests::binding_write_rolls_back_memory_when_persist_fails ... ok
+test data::store::tests::empty_running_set_is_persistable ... ok
+test data::store::tests::launch_target_ignores_whitespace_binding ... ok
+test data::store::tests::launch_target_never_falls_back_to_another_workspace ... ok
+test data::store::tests::missing_ids_are_reported_not_silently_dropped ... ok
+test data::store::tests::old_config_without_running_ids_deserializes_empty ... ok
+test data::store::tests::restorable_ids_drop_deleted_workspaces_without_fallback ... ok
+test data::store::tests::running_ids_are_normalized_for_stable_comparison ... ok
+test data::store::tests::running_ids_roll_back_on_persist_failure ... ok
+test data::store::tests::running_ids_write_is_skipped_when_unchanged ... ok
+test data::store::tests::running_ids_write_persists_change ... ok
+test data::store::tests::selected_workspace_never_falls_back_to_first ... ok
+test data::store::tests::shared_oauth_client_id_uses_client_id_format ... ok
+test data::store::tests::workspace_secret_roundtrip ... ok
+test access_log::tests::disabled_http_logging_does_not_create_a_file ... ok
+test audit::tests::command_failure_is_not_counted_as_a_successful_tool_call ... ok
+test audit::tests::command_follows_input_detail_retention ... ok
+test audit::grep_outcome::tests::async_grep_polling_works_with_metadata_only_and_store_clones ... ok
+test mcp::listener::tests::bind_listener_reports_port_conflict_synchronously ... ok
+test audit::tests::rejected_tool_attempt_is_queryable_as_a_tool_record ... ok
+test mcp::listener::tests::discovery_reports_the_current_package_version ... ok
+test mcp::listener::tests::discovery_prevents_stale_tool_catalog_caching ... ok
+test audit::tests::disabled_tool_audit_does_not_insert_records ... ok
+test mcp::server::tests::chatgpt_session_metadata_is_injected_for_all_local_tools ... ok
+test mcp::server::tests::initialize_does_not_claim_tool_catalog_notifications_without_a_stream ... ok
+test mcp::server::tests::initialize_instructions_define_the_history_persistence_workflow ... ok
+test audit::grep_outcome::tests::no_match_is_success_but_original_exit_and_output_are_preserved ... ok
+test audit::tests::retention_removes_records_older_than_the_configured_window ... ok
+test mcp::server::tests::local_tool_arguments_cannot_spoof_internal_session_context ... ok
+test mcp::upstream::tests::empty_manager_exposes_no_routes ... ok
+test mcp::server::tests::workspace_prompt_initializes_or_restores_a_chatgpt_session ... ok
+test audit::tests::outcome_filter_applies_before_limit ... ok
+test audit::tests::removing_a_workspace_keeps_other_profiles_on_the_same_path ... ok
+test access_log::tests::middleware_logs_an_unmatched_scanner_path ... ok
+test audit::tests::sqlite_store_records_queries_and_stats ... ok
+test mcp::upstream::tests::upstream_mcp_creation_flags_hide_console_windows ... ok
+test platform::open::tests::allows_http_and_https ... ok
+test mcp::upstream::tests::invalid_prefix_is_rejected_before_process_start ... ok
+test platform::open::tests::rejects_non_http_schemes_and_junk ... ok
+test platform::windows::net::tests::local_port_from_dw_decodes_windows_network_order ... ok
+test audit::tests::request_context_uses_frp_xff_tail_and_keeps_reason_optional ... ok
+test runtime::supervisor::tests::a_recovered_port_clears_missing_port_checks ... ok
+test runtime::supervisor::tests::refresh_cleans_up_only_after_running_runtime_is_confirmed_missing ... ok
+test runtime::supervisor::tests::refresh_does_not_cleanup_a_running_runtime_that_is_listening ... ok
+test runtime::supervisor::tests::refresh_does_not_cleanup_a_starting_runtime ... ok
+test secret::keyring_store::tests::random_secret_is_non_empty ... ok
+test runtime::supervisor::tests::upstream_preflight_failure_is_visible_as_runtime_error ... ok
+test settings::model::tests::accepts_frontend_camel_case_server_port ... ok
+test mcp::server::tests::legacy_grep_calls_are_mapped_to_the_public_grep_text_tool ... ok
+test audit::tests::config_and_workspace_id_persist ... ok
+test settings::model::tests::keeps_legacy_snake_case_server_port_compatible ... ok
+test tools::command_line::tests::windows_paths_quotes_and_empty_arguments_round_trip ... ok
+test secret::keyring_store::tests::workspace_secret_roundtrip ... ok
+test tools::exec::tests::windows_hidden_creation_flags_match_frpc_no_window_pattern ... ok
+test tools::exec::tests::resolves_an_arbitrarily_named_workspace_local_entry ... ok
+test mcp::upstream::tests::streamable_http_manager_discovers_forwards_and_reuses_session ... ok
+test audit::tests::clearing_records_keeps_audit_configuration ... ok
+test tools::exec::tests::启动失败时返回统一执行结果 ... ok
+test tools::exec::tests::程序不存在时返回统一执行结果 ... ok
+test runtime::port::tests::rejects_a_different_macos_bundle_identifier ... ok
+test runtime::port::tests::recognizes_a_previous_coding_tools_macos_bundle ... ok
+test tools::file::streaming_tests::incomplete_utf8_at_eof_errors ... ok
+test tools::file::streaming_tests::incomplete_utf8_after_valid_line_errors ... ok
+test runtime::port::tests::rejects_a_matching_identifier_from_a_different_app_bundle ... ok
+test tools::exec::tests::windows_scripts_use_their_platform_runners ... ok
+test tools::file::streaming_tests::utf8_straddling_chunk_boundary_ok ... ok
+test mcp::server::tests::active_project_is_bound_from_openai_session_metadata ... ok
+test tools::patch::tests::delete_then_add_same_path_replaces_instead_of_concatenating_old_content ... ok
+test tools::patch::tests::preserves_crlf_when_inserting_multiple_lines ... ok
+test tools::patch::tests::patch_check_does_not_modify_workspace ... ok
+test tools::patch::tests::validation_failure_in_later_file_keeps_all_files_unchanged ... ok
+test tools::file::streaming_tests::streaming_stops_before_eof_once_max_bytes_filled ... ok
+test tools::policy::tests::configured_commands_keep_basic_diagnostics ... ok
+test tools::policy::tests::dangerous_mode_bypasses_normal_exec_gates ... ok
+test tools::policy::tests::patch_size_uses_workspace_limit ... ok
+test tools::policy::tests::basic_diagnostic_commands_are_allowed ... ok
+test mcp::server::tests::host_session_key_takes_precedence_over_explicit_session_key ... ok
+test tools::policy::tests::trusted_allows_shell_syntax_while_safe_still_blocks_it ... ok
+test tools::file::walk_bound_tests::list_files_respects_visit_budget ... ok
+test tools::policy::tests::trusted_mode_accepts_any_configured_workspace_script_extension ... ok
+test tools::policy::tests::trusted_mode_accepts_an_extensionless_workspace_entry ... ok
+test tools::registry::tests::session_project_tools_are_not_exposed_as_actions ... ok
+test tools::policy::tests::workspace_allowed_commands_override_defaults ... ok
+test tray::autostart::tests::autostart_flag_is_recognised ... ok
+test tray::autostart::tests::command_handles_spaces_chinese_and_long_paths ... ok
+test tray::autostart::tests::command_quotes_exe_path ... ok
+test tools::registry::tests::core_catalog_exposes_29_chatgpt_compatible_tools ... ok
+test tray::autostart::tests::disable_keeps_binding_when_delete_fails ... ok
+test tray::autostart::tests::disable_keeps_binding_when_readback_is_unknown ... ok
+test tray::autostart::tests::disable_keeps_binding_when_run_value_survives ... ok
+test tray::autostart::tests::enable_reports_read_failure_instead_of_claiming_success ... ok
+test tray::autostart::tests::disable_removes_run_then_binding ... ok
+test tray::autostart::tests::enable_restores_old_binding_pointing_at_deleted_workspace ... ok
+test tray::autostart::tests::enable_reports_rollback_failure_explicitly ... ok
+test tray::autostart::tests::enable_rolls_back_when_binding_save_fails ... ok
+test tray::autostart::tests::enable_rolls_back_when_readback_does_not_match ... ok
+test tray::autostart::tests::enable_writes_run_then_binding ... ok
+test tray::autostart::tests::enable_only_touches_this_apps_run_entry ... ok
+test tray::autostart::tests::run_state_distinguishes_missing_from_failure ... ok
+test tray::autostart::tests::enable_aborts_when_binding_cannot_be_read ... ok
+test tray::icon::tests::grayscale_is_monotonic_in_brightness ... ok
+test tray::icon::tests::grayscale_keeps_length_and_alpha ... ok
+test tray::icon::tests::grayscale_output_is_actually_gray ... ok
+test tray::state::tests::all_stopped_is_gray ... ok
+test tray::state::tests::degraded_and_healthy_both_count_as_running ... ok
+test tray::state::tests::mcp_error_is_gray_and_not_counted_as_running ... ok
+test tray::state::tests::mcp_error_takes_precedence_over_tunnel_message ... ok
+test tray::state::tests::no_workspaces_is_gray_and_explained ... ok
+test tray::state::tests::one_running_one_stopped_shows_running_icon ... ok
+test tray::icon::tests::embedded_fallback_has_expected_size ... ok
+test tray::state::tests::running_with_dead_tunnel_still_shows_running_icon ... ok
+test tray::state::tests::running_with_healthy_tunnel_shows_running_icon ... ok
+test tray::state::tests::starting_still_shows_stopped_icon ... ok
+test tray::icon::tests::embedded_fallback_is_visible_but_not_full_coverage ... ok
+test tray::state::tests::running_without_tunnel_shows_running_icon ... ok
+test tray::state::tests::starting_alongside_running_shows_running_icon ... ok
+test tray::tests::immediate_stop_is_persisted_not_kept ... ok
+test tray::tests::multi_workspace_without_name_falls_back_safely ... ok
+test tray::tests::concurrent_transition_of_one_workspace_does_not_erase_another ... ok
+test tray::tests::missing_target_is_reported_even_with_single_workspace ... ok
+test tray::tests::multiple_workspaces_show_bound_name ... ok
+test tray::tests::ok_status_without_running_is_treated_as_failure ... ok
+test tray::tests::single_workspace_hides_redundant_name ... ok
+test tray::tests::restart_cancellation_does_not_leak_suppression ... ok
+test tray::tests::running_without_listening_port_is_not_recorded ... ok
+test tray::tests::startup_paths_are_mutually_exclusive ... ok
+test tray::tests::suppression_is_depth_counted_and_cancellation_safe ... ok
+test tray::tests::unbound_never_shows_parentheses ... ok
+test tray::tests::unsettled_state_keeps_previous_membership ... ok
+test tunnel::access::tests::network_recovery_requires_sustained_offline ... ok
+test tunnel::access::tests::single_offline_probe_does_not_mark_outage ... ok
+test tunnel::cloudflare::tests::adds_http2_protocol_args_when_enabled ... ok
+test tunnel::cloudflare::tests::ignores_invalid_hosts ... ok
+test tunnel::cloudflare::tests::extracts_trycloudflare_url_from_log_line ... ok
+test tunnel::cloudflare::tests::omits_protocol_args_when_disabled ... ok
+test tunnel::frp::client::tests::aggregate_proxy_is_enabled_when_any_route_requests_it ... ok
+test tunnel::frp::client::tests::login_success_alone_is_not_a_ready_proxy ... ok
+test tunnel::frp::client::tests::all_distinct_proxy_successes_are_counted ... ok
+test tunnel::frp::client::tests::frp_not_found_html_is_classified_as_not_routed ... ok
+test tunnel::frp::client::tests::successful_relogin_clears_reconnect_loop ... ok
+test tunnel::frp::client::tests::reconnect_loop_is_detected_from_trailing_errors ... ok
+test tunnel::frp::client::tests::managed_pid_paths_are_isolated_and_sanitize_workspace_ids ... ok
+test tunnel::frp::client::tests::managed_config_paths_are_isolated_by_workspace ... ok
+test tunnel::frp::tests::build_frpc_toml_for_routes_returns_empty_for_no_routes ... ok
+test tunnel::frp::tests::build_frpc_toml_for_routes_contains_all_proxies ... ok
+test tunnel::frp::tests::build_frpc_toml_for_routes_supports_mcp_and_actions_together ... ok
+test tunnel::frp::tests::build_frpc_toml_for_routes_keeps_workspace_proxy_names_unique ... ok
+test tunnel::frp::tests::build_frpc_toml_uses_global_profile_server ... ok
+test tunnel::frp::tests::build_frpc_toml_includes_tls_for_legacy_workspace_flag ... ok
+test tunnel::frp::tests::build_frpc_toml_includes_tls_when_profile_enables_it ... ok
+test tunnel::frp::tests::proxy_name_is_stable_when_workspace_is_renamed ... ok
+test tunnel::frp::tests::mcp_snippet_uses_tunnel_subdomain ... ok
+test tunnel::frp::tests::resolve_token_from_matching_global_profile_when_manual_server ... ok
+test tunnel::frp::tests::same_name_workspaces_receive_distinct_proxy_names ... ok
+test tunnel::supervisor::tests::active_routes_allow_distinct_subdomains ... ok
+test tunnel::supervisor::tests::restore_active_frp_routes_rehydrates_all_listening_workspaces ... ok
+test tunnel::supervisor::tests::active_routes_allow_mixed_proxy_preferences ... ok
+test tunnel::supervisor::tests::active_routes_reject_duplicate_subdomains_case_insensitively ... ok
+test tunnel::supervisor::tests::different_workspaces_may_use_different_frp_servers ... ok
+test tools::file::walk_bound_tests::search_text_prunes_ignored_directories ... ok
+test update::tests::compare_versions_orders_semver ... ok
+test tunnel::supervisor::tests::sync_frp_sessions_removes_stale_frp_entries_and_updates_urls ... ok
+test update::tests::normalize_strips_v_prefix ... ok
+test update::tests::parse_latest_detects_final_release_after_custom_prerelease ... ok
+test update::tests::parse_latest_detects_newer_release ... ok
+test update::tests::parse_latest_rejects_bad_tag ... ok
+test tunnel::supervisor::tests::syncing_one_workspace_does_not_change_another_workspace_pid ... ok
+test update::tests::parse_latest_reports_up_to_date ... ok
+test tunnel::supervisor::tests::stale_profile_does_not_match_a_replaced_route ... ok
+test workspace::model::tests::enabled_upstreams_cannot_share_a_prefix ... ok
+test workspace::model::tests::disabled_tool_is_not_exposed_by_new_configuration ... ok
+test workspace::model::tests::new_configurations_expose_every_discovered_tool_by_default ... ok
+test workspace::model::tests::streamable_http_requires_http_url ... ok
+test workspace::model::tests::new_workspaces_default_to_dangerous_permission_mode ... ok
+test workspace::legacy_import::tests::legacy_home_points_under_user_home ... ok
+test workspace::model::tests::streamable_http_configuration_is_valid ... ok
+test workspace::model::tests::upstream_stdio_configuration_is_valid ... ok
+test workspace::model::tests::non_empty_legacy_allowlist_remains_restrictive ... ok
+test workspace::model::tests::upstream_public_name_is_namespaced ... ok
+test workspace::resources::tests::allows_a_workspace_to_keep_its_own_ports ... ok
+test workspace::model::tests::upstream_rejects_invalid_http_header ... ok
+test workspace::resources::tests::allows_fixing_mcp_port_when_legacy_actions_conflict_is_unchanged ... ok
+test workspace::resources::tests::assign_free_ports_avoids_colliding_mcp_and_actions ... ok
+test workspace::resources::tests::assign_free_ports_keeps_defaults_when_available ... ok
+test workspace::resources::tests::assign_free_ports_skips_ports_claimed_by_other_workspaces ... ok
+test workspace::resources::tests::ignores_blank_subdomain_claims ... ok
+test workspace::resources::tests::rejects_changed_mcp_port_that_conflicts_with_another_service ... ok
+test workspace::resources::tests::rejects_duplicate_mcp_port_across_workspaces_before_start ... ok
+test workspace::resources::tests::rejects_duplicate_ports_between_services_in_one_workspace ... ok
+test workspace::resources::tests::start_is_blocked_when_target_participates_in_legacy_duplicate ... ok
+test workspace::resources::tests::rejects_duplicate_subdomains_with_owner_details ... ok
+test workspace::resources::tests::rejects_port_shared_by_mcp_and_another_workspace_actions ... ok
+test workspace::resources::tests::unrelated_update_is_not_blocked_by_legacy_duplicates ... ok
+test harness::state::tests::capture_baseline_prunes_skipped_directories ... ok
+test tools::policy::tests::dangerous_mode_keeps_catastrophic_safety_floor ... ok
+test tools::file::walk_bound_tests::list_files_prunes_ignored_directories ... ok
+test harness::state::tests::standalone_status_never_reads_workspace_file_contents ... ok
+test harness::state::tests::status_keeps_read_available_without_task ... ok
+test harness::state::tests::starting_task_does_not_create_workspace_copies ... ok
+test tools::exec::tests::windows_batch_scripts_preserve_space_paths_and_arguments ... ok
+test mcp::upstream::tests::stdio_manager_discovers_defaults_and_honors_disabled_tool ... ok
+test tools::file::streaming_tests::streaming_matches_legacy_semantics ... ok
+test tools::exec::tests::trusted_shell_and_dangerous_system_exec_run_for_real ... ok
+test tools::exec::tests::windows_workspace_scripts_and_python_unicode_execute_successfully ... ok
+
+test result: ok. 240 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.14s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 31 tests
+test core_profile_keeps_the_default_capabilities_and_adds_history_tools ... ok
+test advanced_profile_exposes_every_declared_tool ... ok
+test active_project_rejects_absolute_paths_outside_workspace_pool ... ok
+test discover_projects_supports_marker_scan_and_name_lookup ... ok
+test active_project_is_isolated_per_host_session_and_accepts_absolute_paths ... ok
+test active_project_root_keeps_catastrophic_delete_floor ... ok
+test explicit_relative_exec_workdir_is_resolved_from_active_project ... ok
+test harness_operation_log_follows_session_active_project ... ok
+test check_exec_environment_reports_policy_metadata ... ok
+test grep_reuses_search_text_schema_and_behavior ... ok
+test list_files_accepts_glob_alias ... ok
+test default_cwd_is_used_by_file_and_native_exec_tools ... ok
+test read_file_explicit_parent_path_is_read_only ... ok
+test native_diagnostics_support_pwd_and_ls_without_a_shell ... ok
+test killed_session_reports_command_failure_even_when_transport_succeeds ... ok
+test read_file_happy_path ... ok
+test request_permissions_exposes_public_schema_and_grants_in_dangerous_mode ... ok
+test search_text_stops_after_max_results ... ok
+test server_info_returns_workspace_and_tools ... ok
+test search_text_filters_by_glob ... ok
+test search_text_skips_binary_and_oversized_files ... ok
+test exec_health_check_reports_worker_and_pipe_status ... ok
+test direct_exec_uses_the_same_result_contract ... ok
+test unknown_tool_is_validation_error ... ok
+test history_archives_follow_session_active_project_and_remain_isolated ... ok
+test nonzero_command_exit_keeps_transport_ok_but_sets_command_ok_false ... ok
+test request_permissions_is_unsupported_not_silent_grant ... ok
+test retained_session_timeout_stops_the_process_after_deadline ... ok
+test git_log_root_does_not_pass_empty_pathspec ... ok
+test harness_tasks_are_scoped_to_active_project_identity ... ok
+test git_tools_follow_session_active_project_inside_workspace_pool ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s
+
+
+running 24 tests
+test exec_command_rejects_workdir_escape_via_policy ... ok
+test exec_command_rejects_disallowed_destructive_command ... ok
+test exec_command_rejects_shell_chaining ... ok
+test destructive_command_targeting_git_is_always_rejected ... ok
+test interpreter_command_cannot_delete_github_assets ... ok
+test interpreter_command_cannot_delete_git_assets ... ok
+test interpreter_command_cannot_write_git_files ... ok
+test interpreter_command_cannot_write_outside_workspace_scope ... ok
+test dangerous_command_requires_explicit_confirmation ... ok
+test safe_permission_mode_blocks_network_looking_command ... ok
+test exec_command_allows_python_c_but_rejects_shell_escape ... ok
+test external_read_tools_allow_directory_listing_and_search ... ok
+test read_file_allows_explicit_external_read_only_path ... ok
+test view_image_allows_explicit_external_read_only_path ... ok
+test exec_command_rejects_host_scope_even_with_confirmation ... ok
+test apply_patch_allows_deleting_a_normal_file ... ok
+test apply_patch_allows_modifying_a_normal_file ... ok
+test exec_command_allows_workspace_child_process_during_transition ... ok
+test apply_patch_rejects_traversal_target ... ok
+test read_file_rejects_symlink_escape ... ok
+test apply_patch_rejects_absolute_path_target ... ok
+test deleting_readme_requires_explicit_confirmation ... ok
+test deleting_git_assets_is_always_rejected ... ok
+test patch_check_rejects_all_git_and_github_writes ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+
+running 6 tests
+test absolute_outside_cwd_and_write_are_rejected_without_side_effects ... ok
+test missing_program_is_an_mcp_error_not_a_completed_operation ... ok
+test windows_unquoted_backslashes_reach_the_process_intact ... ok
+test nonzero_and_running_commands_do_not_receive_a_success_hint ... ok
+test absolute_workspace_cwd_and_interpreter_can_really_write ... ok
+test outside_executable_cannot_impersonate_an_allowlisted_name ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+
+
+running 4 tests
+test 任务创建会捕获基线并在重启后恢复 ... ok
+test 同一工作区只允许一个可写任务且拒绝非法迁移 ... ok
+test project_state包含分支任务和脏状态摘要 ... ok
+test 外部文件变化会被识别且操作会留下事件 ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+
+running 9 tests
+test 工具清单包含项目状态和任务上下文能力 ... ok
+test 无任务时仍可执行_dry_run_预检 ... ok
+test 无任务时普通_patch也可执行并保留撤销能力 ... ok
+test codex_patch格式支持新增文件dry_run和实际应用 ... ok
+test workspace_allows_exec_during_transition ... ok
+test 无任务时_exec_command不返回任务门禁错误 ... ok
+test 无任务时_exec错误不应建议启动任务 ... ok
+test harness_tools_support_task_lifecycle ... ok
+test 外部修改会在写工具执行前被拒绝 ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+
+running 16 tests
+test real_history_fixture_preserves_archives_when_opted_in ... ok
+test history_tools_are_exposed_with_public_schemas ... ok
+test search_snippet_handles_unicode_case_expansion_without_invalid_utf8_slicing ... ok
+test bootstrap_requires_a_stable_session_id ... ok
+test bootstrap_reports_missing_initial_input_without_claiming_capture ... ok
+test bootstrap_prefers_host_session_and_preserves_initial_input ... ok
+test search_and_read_return_precise_lossless_archive_pages ... ok
+test concurrent_bootstrap_allocates_distinct_numbers ... ok
+test checkpoint_reports_missing_raw_user_input ... ok
+test bootstrap_retry_keeps_old_initial_input_and_appends_a_revision ... ok
+test rebuilds_derived_files_without_changing_existing_archives ... ok
+test checkpoint_preserves_raw_input_and_superseding_revision_evidence ... ok
+test checkpoint_rejects_a_path_from_another_session ... ok
+test workspace_root_and_history_paths_cannot_escape_workspace ... ok
+test read_without_max_bytes_uses_bounded_lossless_pages ... ok
+test bootstrap_response_stays_bounded_for_many_large_archives ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+
+
+running 2 tests
+test permission_grant_echo_excludes_internal_context ... ok
+test permission_denial_echo_excludes_internal_context ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+
+running 20 tests
+test active_project_binding_survives_context_recreation ... ok
+test active_project_binding_recovers_from_backup_state_file ... ok
+test corrupt_binding_store_fails_closed_for_unrebound_sessions ... ok
+test project_selection_can_recover_after_project_directory_is_renamed ... ok
+test missing_search_path_defaults_to_the_active_project ... ok
+test codex_delete_patch_uses_project_root_not_pool_root ... ok
+test codex_update_patch_uses_project_root_not_pool_root ... ok
+test codex_hunk_lines_that_look_like_unified_headers_are_unchanged ... ok
+test codex_paths_preserve_real_a_and_b_directories ... ok
+test codex_add_patch_uses_project_root_not_pool_root ... ok
+test missing_bound_project_fails_closed_until_explicit_rebind ... ok
+test scoped_patch_preflight_does_not_write_any_project ... ok
+test unified_patch_transport_headers_and_plain_headers_are_both_scoped ... ok
+test scoped_patch_keeps_parent_traversal_rejected ... ok
+test old_checkpoint_is_rejected_after_project_switch ... ok
+test history_checkpoint_does_not_block_next_project_command ... ok
+test custom_history_directory_is_excluded_from_harness_baseline ... ok
+test custom_history_exclusion_survives_context_recreation ... ok
+test real_external_code_change_is_still_blocked_after_history_checkpoint ... ok
+test many_other_sessions_do_not_evict_existing_project_binding ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.63s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

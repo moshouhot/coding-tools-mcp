@@ -1,0 +1,7 @@
+
+running 2 tests
+test permission_grant_echo_excludes_internal_context ... ok
+test permission_denial_echo_excludes_internal_context ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+

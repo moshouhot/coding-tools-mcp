@@ -1,0 +1,13 @@
+
+running 2 tests
+test permission_grant_echo_excludes_internal_context ... FAILED
+test permission_denial_echo_excludes_internal_context ... FAILED
+
+failures:
+
+failures:
+    permission_denial_echo_excludes_internal_context
+    permission_grant_echo_excludes_internal_context
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+

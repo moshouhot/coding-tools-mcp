@@ -1,0 +1,68 @@
+{
+  "task_id": "advisor",
+  "runner_status": "TIMEOUT",
+  "timeout_kind": "idle",
+  "pi_exit_code": null,
+  "forensics_invocation_id": "f3836f3059f040ceabd54b0ca26ca890",
+  "supervisor_pid": 7868,
+  "supervisor_ppid": 1296,
+  "worker_pid": 2220,
+  "duration_seconds": 794.547,
+  "elapsed_seconds": 794.547,
+  "idle_seconds": 180.031,
+  "idle_timeout_seconds": 180,
+  "hard_timeout_seconds": 900,
+  "last_activity_at": "2026-09-26T05:43:53.249850+00:00",
+  "last_activity_source": "pi_json_event",
+  "last_event_type": "tool_execution_update",
+  "last_tool_name": "bash",
+  "last_progress": "tool_execution_update:bash",
+  "started_at": "2026-09-26T05:33:38.728368+00:00",
+  "finished_at": "2026-09-26T05:46:53.276221+00:00",
+  "project_root": "F:\\Nextcloud\\project\\coding-tools-mcp",
+  "task_file": "F:\\Nextcloud\\project\\coding-tools-mcp\\docs\\verification\\phase2-rereview-2026-09-26\\advisor\\TASK.md",
+  "worker": {
+    "provider": "本地4.1",
+    "model": "deepseek-v4.1-flash",
+    "thinking": "high"
+  },
+  "report_exists": false,
+  "worker_result_exists": false,
+  "worker_result_valid": false,
+  "worker_result_error": null,
+  "runner_error": "idle_timeout",
+  "exit_forensics": {
+    "forensics_file": "EXIT_FORENSICS.jsonl",
+    "preload_active": true,
+    "worker_pid": 2220,
+    "guard_started": true,
+    "terminal_guard_evidence": false,
+    "js_exit_requested": false,
+    "js_exit_code": null,
+    "uncaught_exception_observed": false,
+    "supervisor_terminate_observed": true,
+    "supervisor_termination_attempts": [
+      {
+        "event": "supervisor_terminate_attempt",
+        "termination_cause": "idle_timeout",
+        "timeout_kind": "idle",
+        "exception_type": null
+      }
+    ],
+    "foreign_guard_records_ignored": 0,
+    "worker_exit_code_raw": 1,
+    "worker_exit_code_normalized": {
+      "value": 1,
+      "normalized": true,
+      "raw": 1,
+      "unsigned_32": 1,
+      "signed_32": 1,
+      "hex": "0x00000001"
+    },
+    "termination_classification": "supervisor_timeout_termination",
+    "classification_reasons": [
+      "supervisor classified the run as a idle timeout and recorded 1 terminate/kill attempt(s); the attempts do not prove signal delivery or establish that they caused the worker exit"
+    ],
+    "record_count": 6
+  }
+}

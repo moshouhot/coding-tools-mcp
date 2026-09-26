@@ -1,0 +1,15 @@
+# Keep verbose model/supervisor streams local. Commit focused test evidence,
+# task contract, advisor report, structured result and final review instead.
+advisor/stdout.txt
+advisor/stderr.txt
+advisor/supervisor.stdout.txt
+advisor/supervisor.stderr.txt
+advisor/EXIT_FORENSICS.jsonl
+advisor/RUN_STATE.json
+final-advisor/stdout.txt
+final-advisor/stderr.txt
+final-advisor/supervisor.stdout.txt
+final-advisor/supervisor.stderr.txt
+final-advisor/EXIT_FORENSICS.jsonl
+final-advisor/RUN_STATE.json
+__pycache__/

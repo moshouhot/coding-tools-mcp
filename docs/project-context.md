@@ -7,7 +7,7 @@
 | 属性 | 值 |
 |------|-----|
 | 项目名称 | Coding Tools MCP Rust |
-| 版本 | 0.0.0（重构中） |
+| 版本 | 以 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 为准 |
 | 语言 | Rust + TypeScript |
 | 框架 | Tauri 2 + Svelte |
 | 类型 | 桌面客户端 + 内嵌 MCP 运行时 |
@@ -43,6 +43,8 @@
 - `old/tests/compliance/` — 71 项合规测试
 
 ## 快速开始
+
+> 2026-09-26 校正：Rust/Tauri 工程已经实现，不再是待创建的重构骨架。当前项目选择规则以 README 的 Workspace Pool / Active Project 章节及 `src-tauri/src/tools/registry.rs` 的工具契约为准；历史规格只代表其生成时的设计。
 
 1. 阅读 [技术栈](./project-context/tech-stack.md) 了解项目使用的技术
 2. 阅读 [架构设计](./project-context/architecture.md) 了解项目结构

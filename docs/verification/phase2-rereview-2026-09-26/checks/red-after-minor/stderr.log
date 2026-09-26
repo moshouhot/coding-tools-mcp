@@ -1,0 +1,75 @@
+warning: function `await_listener_shutdown_blocking` is never used
+   --> src\runtime\port.rs:206:8
+    |
+206 | pub fn await_listener_shutdown_blocking(handle: Option<JoinHandle<()>>, port: u16) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: methods `drop_workspace` and `sync_stop_and_wait` are never used
+   --> src\runtime\supervisor.rs:97:12
+    |
+ 51 | impl RuntimeSupervisor {
+    | ---------------------- methods in this implementation
+...
+ 97 |     pub fn drop_workspace(&mut self, profile: &WorkspaceProfile) {
+    |            ^^^^^^^^^^^^^^
+...
+410 |     fn sync_stop_and_wait(&mut self, profile: &WorkspaceProfile, kind: ServiceKind) {
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: `coding-tools-mcp-desktop` (lib) generated 2 warnings
+   Compiling coding-tools-mcp-desktop v0.2.4-custom.5 (F:\Nextcloud\project\coding-tools-mcp\src-tauri)
+warning: field `harness` is never read
+  --> tests\phase2_rereview_probe.rs:23:5
+   |
+20 | struct Fixture {
+   |        ------- field in this struct
+...
+23 |     harness: PathBuf,
+   |     ^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `bootstrap` is never used
+  --> tests\phase2_rereview_probe.rs:59:8
+   |
+27 | impl Fixture {
+   | ------------ method in this implementation
+...
+59 |     fn bootstrap(&self, input: &str) -> Value {
+   |        ^^^^^^^^^
+
+warning: `coding-tools-mcp-desktop` (test "phase2_rereview_probe") generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.65s
+     Running tests\phase2_rereview_probe.rs (target\debug\deps\phase2_rereview_probe-98ee4af2e4484f84.exe)
+
+thread 'safe_bound_project_replaced_by_inpool_symlink_fails_closed' (5620) panicked at tests\phase2_rereview_probe.rs:354:5:
+assertion `left == right` failed: conversation silently retargeted to another project via symlink: {"bytes_read":4,"content":"beta","encoding":"utf-8","end_line":1,"ok":true,"path":"beta/name.txt","start_line":1,"total_bytes":4,"total_lines":1,"truncated":false,"truncated_by":null,"warnings":[]}
+  left: Bool(true)
+ right: false
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'safe_lost_binding_does_not_silently_fall_back_after_repair_restart' (11664) panicked at tests\phase2_rereview_probe.rs:160:5:
+assertion `left == right` failed: lost session silently fell back to default_cwd after repair restart: {"active_project":"beta","ok":true,"project_root":"\\\\?\\E:\\360data\\TEMP\\.tmp40OMr8\\pool\\beta","session_scoped":true,"source":"default_cwd","workspace":"\\\\?\\E:\\360data\\TEMP\\.tmp40OMr8\\pool"}
+  left: Bool(true)
+ right: false
+
+thread 'safe_readonly_history_dir_must_not_exempt_real_code_from_baseline' (4752) panicked at tests\phase2_rereview_probe.rs:264:5:
+assertion `left == right` failed: real code under a history_dir was exempted from the Harness baseline: {"child_process":false,"command":"pwd","command_ok":true,"command_runner":"native_builtin","duration_ms":0,"elapsed_ms":0,"execution_boundary":"policy_only","execution_mode":"native_builtin","exit_code":0,"filesystem_scope":"workspace","ok":true,"operation_id":"80eaae34cde843aaa27e1b1515711a71","recoverable":false,"resolved_cwd":"\\\\?\\E:\\360data\\TEMP\\.tmpkDiNsn\\pool\\alpha","sandbox_enforced":false,"status":"exited","stderr":"","stderr_truncated":false,"stdout":"\\\\?\\E:\\360data\\TEMP\\.tmpkDiNsn\\pool\\alpha\n","stdout_truncated":false,"suggestion":"命令已完成","termination_reason":"exited","transport_ok":true,"warnings":["native diagnostic without child process"]}
+  left: Bool(true)
+ right: false
+
+thread 'safe_readonly_history_search_works_with_unwritable_metadata_store' (9576) panicked at tests\phase2_rereview_probe.rs:296:5:
+assertion `left == right` failed: read-only history search failed because metadata was unwritable: {"error":{"category":"state","code":"MANAGED_PROJECT_PATH_STORE_UNAVAILABLE","details":{"reason":"当文件已存在时，无法创建该文件。 (os error 183)"},"message":"Unable to persist managed project path metadata.","retryable":true},"harness":{"baseline_matches":null,"branch":null,"capabilities":{"exec":{"reason":"无任务模式允许直接执行，建议需要长期追踪时调用 start_task","recoverable":true,"status":"available"},"git":{"reason":"当前工作区不是可读取 Git 状态的仓库","recoverable":true,"status":"degraded"},"network":{"reason":"网络权限由工具策略控制，不由 Harness 任务状态决定","recoverable":true,"status":"managed_by_policy"},"read":{"reason":"工作区读取不依赖活动任务","recoverable":true,"status":"available"},"write":{"reason":"无任务模式允许直接修改，建议需要长期追踪时调用 start_task","recoverable":true,"status":"available"}},"head":null,"next_actions":[],"reason":"当前没有活动任务，工作区采用无任务模式；修改不会进入任务事件流","recoverable":true,"schema_version":1,"task_id":null,"task_state":null,"task_updated_at":null,"workspace_id":"eb8f1f058f3a94fa11a821209998759f","writable":true},"harness_mode":"standalone","next_actions":[],"ok":false,"recovery_hint":"命令未成功；请检查 stderr、exit_code 或调整参数后重试。","status":"error","summary":"Unable to persist managed project path metadata.","task_required":false}
+  left: Bool(false)
+ right: true
+
+thread 'safe_root_active_project_keeps_custom_history_exclusion' (10232) panicked at tests\phase2_rereview_probe.rs:331:5:
+assertion `left == right` failed: custom History write invalidated the root-project baseline: {"error":{"category":"permission","code":"FILE_CHANGED_EXTERNALLY","details":{},"message":"工作区存在 Harness 未记录的外部文件变化","retryable":false},"harness":{"baseline_matches":false,"branch":null,"capabilities":{"exec":{"reason":"需要活动任务且工作区基线必须匹配","recoverable":true,"status":"denied"},"git":{"reason":"当前工作区不是可读取 Git 状态的仓库","recoverable":true,"status":"degraded"},"network":{"reason":"网络权限由工具策略控制，不由 Harness 任务状态决定","recoverable":true,"status":"managed_by_policy"},"read":{"reason":"工作区读取不依赖活动任务","recoverable":true,"status":"available"},"write":{"reason":"需要活动任务且工作区基线必须匹配","recoverable":true,"status":"denied"}},"head":null,"next_actions":["git_diff","read_file","git_status"],"reason":"工作区基线已变化，写入和执行已暂停","recoverable":true,"schema_version":1,"task_id":"31ec3473c9aa473294e5d86c2d4388e0","task_state":"active","task_updated_at":"1790401763999","workspace_id":"3e5e8bae8ac69e58488e470ab03f085a","writable":false},"ok":false,"status":"error","summary":"工作区存在 Harness 未记录的外部文件变化"}
+  left: Bool(false)
+ right: true
+
+thread 'safe_two_contexts_keep_each_others_durable_bindings' (4452) panicked at tests\phase2_rereview_probe.rs:231:5:
+binding s1 was clobbered by a second context's sequential write
+error: test failed, to rerun pass `--test phase2_rereview_probe`

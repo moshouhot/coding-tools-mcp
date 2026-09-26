@@ -28,7 +28,7 @@ pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
     (
         "history_session_bootstrap",
         "Initialize or restore development session",
-        "At the start of every new ChatGPT conversation, call this exactly once before the first response and pass the user's verbatim initial_user_input. If the first request identifies a project, bind it with set_active_project first. The archive is then scoped to that Active Project; without one, workspace-level fallback is preserved.",
+        "Initialize or resume the fixed docs/history-session archive for the current Active Project and preserve initial_user_input when supplied. In a host conversation, bind the project first; project-scoped History never falls back to default_cwd.",
         false,
         false,
         false,
@@ -180,7 +180,7 @@ pub const P0_TOOLS: &[(&str, &str, &str, bool, bool, bool)] = &[
     (
         "set_active_project",
         "Set active project",
-        "Bind the current host conversation to a project directory inside the workspace pool. Use this automatically when the user explicitly identifies a directory as the project/repo/codebase or primary coding target. Absolute paths are accepted only when they remain inside the configured workspace.",
+        "Bind an unbound host conversation to one project directory inside the workspace pool. If the conversation is already bound, a different path is rejected unless allow_rebind=true; use allow_rebind only when the user explicitly asks to switch the current project.",
         true,
         false,
         false,
@@ -569,7 +569,6 @@ pub fn input_schema(name: &str) -> Value {
                 "session_key": { "type": "string", "minLength": 1 },
                 "title": { "type": "string" },
                 "initial_user_input": { "type": "string" },
-                "history_dir": { "type": "string", "default": "docs/history-session" },
                 "create_if_missing": { "type": "boolean", "default": true }
             },
             "additionalProperties": false
@@ -582,7 +581,6 @@ pub fn input_schema(name: &str) -> Value {
                 "session_key": { "type": "string", "minLength": 1 },
                 "expected_path": { "type": "string", "minLength": 1 },
                 "project_id": { "type": "string", "minLength": 1 },
-                "history_dir": { "type": "string", "default": "docs/history-session" },
                 "turn_id": { "type": "string", "minLength": 1 },
                 "timestamp": { "type": "string" },
                 "user_intent": { "type": "string" },
@@ -602,7 +600,6 @@ pub fn input_schema(name: &str) -> Value {
             "type": "object",
             "properties": {
                 "workspace_root": { "type": "string", "minLength": 1 },
-                "history_dir": { "type": "string", "default": "docs/history-session" },
                 "repair": { "type": "boolean", "default": false }
             },
             "additionalProperties": false
@@ -611,7 +608,6 @@ pub fn input_schema(name: &str) -> Value {
             "type": "object",
             "properties": {
                 "workspace_root": { "type": "string", "minLength": 1 },
-                "history_dir": { "type": "string", "default": "docs/history-session" },
                 "query": { "type": "string", "default": "" },
                 "cursor": { "type": "integer", "minimum": 0, "default": 0 },
                 "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 }
@@ -622,7 +618,6 @@ pub fn input_schema(name: &str) -> Value {
             "type": "object",
             "properties": {
                 "workspace_root": { "type": "string", "minLength": 1 },
-                "history_dir": { "type": "string", "default": "docs/history-session" },
                 "number": { "type": "integer", "minimum": 1 },
                 "path": { "type": "string", "minLength": 1 },
                 "cursor": { "type": "integer", "minimum": 0, "default": 0 },
@@ -949,7 +944,12 @@ pub fn input_schema(name: &str) -> Value {
         "set_active_project" => json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "minLength": 1 }
+                "path": { "type": "string", "minLength": 1 },
+                "allow_rebind": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Set true only when the user explicitly asks to switch this conversation from its already-bound project to another project."
+                }
             },
             "required": ["path"],
             "additionalProperties": false

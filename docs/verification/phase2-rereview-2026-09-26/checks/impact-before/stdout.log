@@ -1,0 +1,150 @@
+{
+  "ok": true,
+  "tool": "code_insight",
+  "version": "4.0.1",
+  "durationMs": 3705,
+  "project": {
+    "root": "F:\\Nextcloud\\project\\coding-tools-mcp",
+    "source": "explicit",
+    "explicitHonored": true
+  },
+  "runtime": {
+    "packageVersion": "4.0.1",
+    "manifestVersion": "4.0.1",
+    "packageSpec": "mcp-probe-kit@4.0.1",
+    "skillVersion": "4.0.1",
+    "versionAligned": true
+  },
+  "bootstrap": {
+    "skill": {
+      "skillPath": "F:\\Nextcloud\\project\\coding-tools-mcp\\.agents\\skills\\mcp-probe-kit\\SKILL.md",
+      "skillRelPath": ".agents/skills/mcp-probe-kit/SKILL.md",
+      "existed": true,
+      "created": false,
+      "updated": false,
+      "version": "4.0.1",
+      "previousVersion": "4.0.1",
+      "changed": false
+    },
+    "agentsMd": {
+      "path": "AGENTS.md",
+      "existed": true,
+      "created": false,
+      "updated": false,
+      "changed": false
+    },
+    "cliFallback": {
+      "manifestPath": ".mcp-probe-kit/runtime.json",
+      "preservedNewerVersion": false,
+      "files": [
+        {
+          "path": ".mcp-probe-kit/bin/probe.ps1",
+          "created": false,
+          "updated": false,
+          "skipped": true
+        },
+        {
+          "path": ".mcp-probe-kit/bin/probe.cmd",
+          "created": false,
+          "updated": false,
+          "skipped": true
+        },
+        {
+          "path": ".mcp-probe-kit/bin/probe",
+          "created": false,
+          "updated": false,
+          "skipped": true
+        },
+        {
+          "path": ".mcp-probe-kit/runtime.json",
+          "created": false,
+          "updated": false,
+          "skipped": true
+        }
+      ]
+    }
+  },
+  "content": [
+    {
+      "type": "text",
+      "text": "# 工具: code_insight\n\n## 🎯 目标\n完成图谱分析后，由 Agent 按 delegated plan 落盘到 docs/graph-insights\n\n## ✅ 你需要做的事\n- 先消费本次 code_insight 返回的分析结果\n- 严格按 delegated plan 将 Markdown / JSON 保存到指定路径\n- 不要只口头总结而不写文件\n\n## 📦 输出要求\n- 严格按 delegated plan 顺序调用工具或执行手动步骤\n- 产出内容需落盘到计划路径，或在汇总中明确说明\n- 完成后输出总结：产物路径、关键结果、风险/待确认项、下一步\n\n## 🧭 注意事项\n- 工作区模式: direct\n- 来源目录: F:\\Nextcloud\\project\\coding-tools-mcp\n\n---\n# code_insight 图谱分析结果\n\n状态: 可用\n模式: impact -> impact\n来源: gitnexus\n启动策略: managed\n工作区: direct\n源目录: F:\\Nextcloud\\project\\coding-tools-mcp\n\n摘要:\nGitNexus 图谱增强已启用（2/2 成功）: context: { \"error\": \"Symbol 'call_tool_prepared' not found\" } --- **Next:** If planning changes, use impact({target:... | impact: { \"error\": \"Target 'call_tool_prepared' not found\", \"target\": { \"name\": \"call_tool_prepared\" }, \"direction\"...\n\n执行详情:\n- ✅ context: { \"error\": \"Symbol 'call_tool_prepared' not found\" } --- **Next:** If planning changes, use impact({target: \"call_tool_prepared\", direction: \"upstream\", repo: \"coding-tools-mcp\"}) \n- ✅ impact: { \"error\": \"Target 'call_tool_prepared' not found\", \"target\": { \"name\": \"call_tool_prepared\" }, \"direction\": \"upstream\", \"impactedCount\": 0, \"risk\": \"UNKNOWN\" } --- **Next:** Revie\n\n## delegated plan\n1. 先消费本次分析结果（processes/symbols/impact），确认是否满足当前问题\n2. 如需保存，再写入 docs/graph-insights/latest.md（文本）和 docs/graph-insights/latest.json（结构化）\n   输出: docs/graph-insights/latest.md, docs/graph-insights/latest.json\n   说明: 可选同步更新 F:/Nextcloud/project/coding-tools-mcp/AGENTS.md 的图谱入口\n\n后续操作:\n- 如需落盘，写入 docs/graph-insights/latest.md 与 docs/graph-insights/latest.json\n- 如需长期沉淀，可再补充 F:/Nextcloud/project/coding-tools-mcp/AGENTS.md 的图谱入口\n\n## 使用场景指南\n- 探索调用链: `{ mode: \"query\", query: \"login\", goal: \"理解登录认证流程\" }`\n- 深入函数上下文: `{ mode: \"context\", target: \"login\", file_path: \"src/auth/login.ts\" }`\n- 评估影响范围: `{ mode: \"impact\", target: \"login\", direction: \"upstream\", file_path: \"...\" }`\n- 查看代码内容: `{ mode: \"context\", target: \"login\", include_content: true }`\n\n## 下一步建议\n- 查询不精确: 增加 `goal`（例如“理解登录认证流程”）\n- 出现歧义: 传入 `uid` 或 `file_path` 重新执行\n- 需要落盘: 传 `save_to_docs: true`，再按 delegated plan 由 Agent 写入 docs/graph-insights"
+    }
+  ],
+  "structuredContent": {
+    "status": "ok",
+    "provider": "gitnexus",
+    "mode": {
+      "requested": "impact",
+      "resolved": "impact"
+    },
+    "summary": "GitNexus 图谱增强已启用（2/2 成功）: context: { \"error\": \"Symbol 'call_tool_prepared' not found\" } --- **Next:** If planning changes, use impact({target:... | impact: { \"error\": \"Target 'call_tool_prepared' not found\", \"target\": { \"name\": \"call_tool_prepared\" }, \"direction\"...",
+    "warnings": [],
+    "executions": [
+      {
+        "tool": "context",
+        "args": {
+          "name": "call_tool_prepared",
+          "repo": "coding-tools-mcp"
+        },
+        "ok": true,
+        "durationMs": 981,
+        "text": "{\n  \"error\": \"Symbol 'call_tool_prepared' not found\"\n}\n\n---\n**Next:** If planning changes, use impact({target: \"call_tool_prepared\", direction: \"upstream\", repo: \"coding-tools-mcp\"}) to check blast radius. To see execution flows, READ gitnexus://repo/coding-tools-mcp/processes."
+      },
+      {
+        "tool": "impact",
+        "args": {
+          "target": "call_tool_prepared",
+          "direction": "upstream",
+          "maxDepth": 3,
+          "includeTests": true,
+          "repo": "coding-tools-mcp"
+        },
+        "ok": true,
+        "durationMs": 5,
+        "text": "{\n  \"error\": \"Target 'call_tool_prepared' not found\",\n  \"target\": {\n    \"name\": \"call_tool_prepared\"\n  },\n  \"direction\": \"upstream\",\n  \"impactedCount\": 0,\n  \"risk\": \"UNKNOWN\"\n}\n\n---\n**Next:** Review d=1 items first (WILL BREAK). To check affected execution flows, READ gitnexus://repo/coding-tools-mcp/processes."
+      }
+    ],
+    "repo": "coding-tools-mcp",
+    "launcherStrategy": "managed",
+    "ambiguities": [],
+    "workspaceMode": "direct",
+    "sourceRoot": "F:\\Nextcloud\\project\\coding-tools-mcp",
+    "analysisRoot": "F:\\Nextcloud\\project\\coding-tools-mcp",
+    "pathMapped": false,
+    "localFallback": null,
+    "projectDocs": {
+      "docsDir": "docs",
+      "projectContextFilePath": "F:/Nextcloud/project/coding-tools-mcp/AGENTS.md",
+      "latestMarkdownFilePath": "docs/graph-insights/latest.md",
+      "latestJsonFilePath": "docs/graph-insights/latest.json",
+      "archiveMarkdownFilePath": "F:/Nextcloud/project/coding-tools-mcp/docs/graph-insights/2026-09-26T05-35-46-609Z-impact-gitnexus-2-2-context-error-symbol-call_tool_prep.md",
+      "archiveJsonFilePath": "F:/Nextcloud/project/coding-tools-mcp/docs/graph-insights/2026-09-26T05-35-46-609Z-impact-gitnexus-2-2-context-error-symbol-call_tool_prep.json",
+      "navigationSnippet": "### [代码图谱洞察](./graph-insights/latest.md)\n最近一次 code_insight 分析结果，包含调用链、上下文与影响面摘要\n",
+      "devGuideSnippet": "- **代码图谱洞察**: [graph-insights/latest.md](./graph-insights/latest.md) - 需要理解模块依赖、调用链和影响面时优先查看\n"
+    },
+    "plan": {
+      "mode": "delegated",
+      "kind": "docs",
+      "steps": [
+        {
+          "id": "consume-result",
+          "action": "先消费本次分析结果（processes/symbols/impact），确认是否满足当前问题"
+        },
+        {
+          "id": "optional-save",
+          "action": "如需保存，再写入 docs/graph-insights/latest.md（文本）和 docs/graph-insights/latest.json（结构化）",
+          "outputs": [
+            "docs/graph-insights/latest.md",
+            "docs/graph-insights/latest.json"
+          ],
+          "note": "可选同步更新 F:/Nextcloud/project/coding-tools-mcp/AGENTS.md 的图谱入口"
+        }
+      ]
+    },
+    "nextAction": "请按 delegated plan 由 Agent 落盘图谱文档，并更新 F:/Nextcloud/project/coding-tools-mcp/AGENTS.md 的索引入口",
+    "handles": {
+      "graph_resource": "probe://graph/latest"
+    }
+  },
+  "isError": false
+}

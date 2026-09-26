@@ -1,0 +1,22 @@
+{
+  "head": "880c5149eb52d68f161809a42e794dcb39d9118e",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--test",
+    "phase2_rereview_probe",
+    "--",
+    "--test-threads=1",
+    "--nocapture"
+  ],
+  "utc": "2026-09-26T06:07:49.294425+00:00",
+  "exit_code": 101,
+  "timed_out": false,
+  "temporary_test_removed": true,
+  "probe_sha256": "70900af3f780fb94c5125417988d0ad6aa2d64206d113e0a5b850092b1a00667",
+  "production_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout_sha256": "53a67ff27c586d8d87e050b006e1e107a684cb9b2f823f9dc1445bc1c0e7d1e5",
+  "stderr_sha256": "7db5f088b29bdd2c05182e02105397bb528bfc718350a7ec74e23842e9ea1978",
+  "note": "Unresolved safe-expectation probes: failures are RED, not acceptance PASS."
+}

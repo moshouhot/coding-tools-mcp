@@ -13,30 +13,45 @@ struct Fixture {
     _temp: tempfile::TempDir,
 }
 
+fn find_binding_file(root: &std::path::Path, session_key: &str) -> PathBuf {
+    fn walk(dir: &std::path::Path, session_key: &str) -> Option<PathBuf> {
+        for entry in fs::read_dir(dir).ok()?.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(found) = walk(&path, session_key) {
+                    return Some(found);
+                }
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(&path) else {
+                continue;
+            };
+            if text.contains(session_key) {
+                return Some(path);
+            }
+        }
+        None
+    }
+    walk(root, session_key).expect("active-project session binding file")
+}
+
 #[test]
-fn custom_history_directory_is_excluded_from_harness_baseline() {
+fn custom_history_directory_is_rejected() {
     let f = Fixture::new();
     f.bind("alpha");
-    let target = ok(f.call(
+    let result = f.call(
         "history_session_bootstrap",
         json!({
             "initial_user_input": "INITIAL",
             "history_dir": ".ai/session-history"
         }),
-    ));
-    ok(f.call("start_task", json!({"objective": "project work"})));
-    ok(f.call(
-        "history_session_checkpoint",
-        json!({
-            "session_key": target["session_key"],
-            "expected_path": target["current_path"],
-            "project_id": target["project_id"],
-            "history_dir": ".ai/session-history",
-            "raw_user_input": "save custom history"
-        }),
-    ));
-    let result = f.call("exec_command", json!({"cmd": "pwd"}));
-    assert_eq!(result["ok"], true, "{result}");
+    );
+    assert_eq!(result["ok"], false, "{result}");
+    assert_eq!(result["error"]["code"], "HISTORY_DIR_FIXED");
+    assert!(!f.pool.join("alpha/.ai/session-history").exists());
 }
 
 #[test]
@@ -181,7 +196,10 @@ fn project_selection_can_recover_after_project_directory_is_renamed() {
     let f = Fixture::new();
     f.bind("alpha");
     fs::rename(f.pool.join("alpha"), f.pool.join("renamed-alpha")).unwrap();
-    let result = f.call("set_active_project", json!({"path": "beta"}));
+    let result = f.call(
+        "set_active_project",
+        json!({"path": "beta", "allow_rebind": true}),
+    );
     assert_eq!(
         result["ok"], true,
         "recovery blocked by old project Harness: {result}"
@@ -270,7 +288,10 @@ fn old_checkpoint_is_rejected_after_project_switch() {
     let f = Fixture::new();
     f.bind("alpha");
     let old_target = f.bootstrap("ALPHA-INITIAL");
-    f.bind("beta");
+    ok(f.call(
+        "set_active_project",
+        json!({"path": "beta", "allow_rebind": true}),
+    ));
     let new_target = f.bootstrap("BETA-INITIAL");
     assert_eq!(old_target["session_key"], new_target["session_key"]);
     assert_eq!(old_target["current_path"], new_target["current_path"]);
@@ -380,13 +401,7 @@ fn active_project_binding_recovers_from_backup_state_file() {
             &json!({"path": "alpha", "_host_session_key": "persist-chat"}),
         ));
     }
-    let state_dir = harness.join("active-project-sessions");
-    let state_file = fs::read_dir(&state_dir)
-        .unwrap()
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
-        .expect("active-project state file");
+    let state_file = find_binding_file(&harness.join("active-project-sessions"), "persist-chat");
     let backup = state_file.with_extension("json.bak");
     fs::rename(&state_file, &backup).unwrap();
 
@@ -416,13 +431,7 @@ fn corrupt_binding_store_fails_closed_for_unrebound_sessions() {
             &json!({"path": "alpha", "_host_session_key": "old-chat"}),
         ));
     }
-    let state_dir = harness.join("active-project-sessions");
-    let state_file = fs::read_dir(&state_dir)
-        .unwrap()
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
-        .expect("active-project state file");
+    let state_file = find_binding_file(&harness.join("active-project-sessions"), "old-chat");
     fs::write(&state_file, b"{ definitely not valid json").unwrap();
 
     let ctx = ToolContext::for_test(pool, harness).unwrap();
@@ -462,7 +471,7 @@ fn corrupt_binding_store_fails_closed_for_unrebound_sessions() {
 }
 
 #[test]
-fn custom_history_exclusion_survives_context_recreation() {
+fn default_history_exclusion_survives_context_recreation() {
     let temp = tempfile::tempdir().expect("isolated fixture");
     let pool = temp.path().join("pool");
     let harness = temp.path().join("harness");
@@ -481,7 +490,6 @@ fn custom_history_exclusion_survives_context_recreation() {
             "history_session_bootstrap",
             &json!({
                 "initial_user_input": "INITIAL",
-                "history_dir": ".ai/session-history",
                 "_host_session_key": "persist-chat"
             }),
         ));
@@ -497,8 +505,7 @@ fn custom_history_exclusion_survives_context_recreation() {
                 "session_key": boot["session_key"],
                 "expected_path": boot["current_path"],
                 "project_id": boot["project_id"],
-                "history_dir": ".ai/session-history",
-                "raw_user_input": "save custom history",
+                "raw_user_input": "save history",
                 "_host_session_key": "persist-chat"
             }),
         ));
@@ -523,7 +530,10 @@ fn missing_bound_project_fails_closed_until_explicit_rebind() {
     assert_eq!(read["ok"], false, "{read}");
     assert_eq!(read["error"]["code"], "ACTIVE_PROJECT_UNAVAILABLE");
 
-    ok(f.call("set_active_project", json!({"path": "beta"})));
+    ok(f.call(
+        "set_active_project",
+        json!({"path": "beta", "allow_rebind": true}),
+    ));
     let recovered = ok(f.call("read_file", json!({"path": "name.txt"})));
     assert_eq!(recovered["content"], "beta");
 }

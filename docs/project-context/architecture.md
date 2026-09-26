@@ -34,7 +34,7 @@ coding-tools-mcp-rust/
 
 ## 当前状态
 
-仓库处于重构初期，根目录仅有 `old/` 参考实现和 `docs/` 文档。Tauri 工程骨架待创建。
+2026-09-26 校正：Rust/Tauri 后端与 Svelte 前端已经实现，`old/` 是历史参考，不是当前运行时。当前项目支持一个 Connector 对接 Workspace Pool，每个宿主会话绑定独立 Active Project；History 和可选 Harness 任务按项目组织。实现边界与待审批缺陷应结合最新审查报告阅读，不应把本页的目标结构当作验收结果。
 
 ## 架构模式
 
@@ -80,7 +80,7 @@ coding-tools-mcp-rust/
 - **参考**: `old/apps/desktop-client/mcp_desktop_client/runtime.py`
 
 ### mcp/
-- **职责**: MCP 协议实现、17 个工具、HTTP transport
+- **职责**: MCP 协议实现、工具分发、HTTP transport。当前 core 工具面为 29 项，完整列表以 `src-tauri/src/tools/registry.rs` 为准
 - **参考**: `old/coding_tools_mcp/server.py`, `old/docs/profile-v0.1.md`
 
 ### tunnel/
@@ -89,8 +89,8 @@ coding-tools-mcp-rust/
 
 ## 入口文件
 
-- **Tauri 入口**: `src-tauri/src/main.rs`（待创建）
-- **前端入口**: `src/routes/+page.svelte`（待创建）
+- **Tauri 入口**: `src-tauri/src/main.rs` 与 `src-tauri/src/lib.rs`
+- **前端入口**: `src/routes/+page.svelte`
 - **Agent 入口**: `AGENTS.md`
 
 ---

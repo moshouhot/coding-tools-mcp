@@ -67,18 +67,39 @@ pub(crate) fn effective_project_root(
 
 pub fn get_active_project(ctx: &ToolContext, args: &Value) -> Result<Value, WorkspaceError> {
     let session_key = host_session_key(args);
-    let project_root = ctx.active_project_path(session_key)?;
-    let source = match session_key {
-        Some(key) if ctx.has_session_active_project(key) => "session",
-        _ if project_root != ctx.workspace.root() => "default_cwd",
-        _ => "workspace",
+    if let Some(session_key) = session_key {
+        let Some(project_root) = ctx.session_active_project_path(session_key)? else {
+            return Ok(tool_ok(json!({
+                "workspace": ctx.workspace.root_display(),
+                "active_project": Value::Null,
+                "project_root": Value::Null,
+                "session_scoped": true,
+                "source": "unbound",
+                "requires_binding": true
+            })));
+        };
+        return Ok(tool_ok(json!({
+            "workspace": ctx.workspace.root_display(),
+            "active_project": relative_display(ctx.workspace.root(), &project_root),
+            "project_root": project_root.display().to_string(),
+            "session_scoped": true,
+            "source": "session",
+            "requires_binding": false
+        })));
+    }
+    let project_root = ctx.default_cwd_path();
+    let source = if project_root != ctx.workspace.root() {
+        "default_cwd"
+    } else {
+        "workspace"
     };
     Ok(tool_ok(json!({
         "workspace": ctx.workspace.root_display(),
         "active_project": relative_display(ctx.workspace.root(), &project_root),
         "project_root": project_root.display().to_string(),
-        "session_scoped": session_key.is_some(),
-        "source": source
+        "session_scoped": false,
+        "source": source,
+        "requires_binding": false
     })))
 }
 
@@ -95,13 +116,58 @@ pub fn set_active_project(ctx: &ToolContext, args: &Value) -> Result<Value, Work
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| WorkspaceError::invalid_argument("path is required"))?;
-    let resolved = resolve_project_directory(ctx, raw)?;
-    ctx.set_session_active_project(session_key, resolved.clone())?;
+    let allow_rebind = args
+        .get("allow_rebind")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let (binding_path, resolved) = resolve_project_binding(ctx, raw)?;
+    let existing = match ctx.stored_session_project_target(session_key) {
+        Ok(value) => value,
+        Err(_error) if allow_rebind => None,
+        Err(error) => return Err(error),
+    };
+    if let Some(existing) = existing.as_ref() {
+        if existing == &resolved {
+            ctx.set_session_active_project_binding(
+                session_key,
+                binding_path,
+                resolved.clone(),
+            )?;
+            return Ok(tool_ok(json!({
+                "workspace": ctx.workspace.root_display(),
+                "active_project": relative_display(ctx.workspace.root(), &resolved),
+                "project_root": resolved.display().to_string(),
+                "session_scoped": true,
+                "rebound": false,
+                "already_bound": true
+            })));
+        }
+        if !allow_rebind {
+            return Err(WorkspaceError::ToolDetails {
+                code: "ACTIVE_PROJECT_REBIND_REQUIRED",
+                message: "This conversation is already bound to another project. A second path reference does not switch it automatically.".into(),
+                category: "validation",
+                retryable: true,
+                details: json!({
+                    "current_project": existing.display().to_string(),
+                    "requested_project": resolved.display().to_string(),
+                    "suggestion": "Only retry with allow_rebind=true when the user explicitly asks to switch the current project."
+                }),
+            });
+        }
+    }
+    ctx.set_session_active_project_binding(
+        session_key,
+        binding_path,
+        resolved.clone(),
+    )?;
     Ok(tool_ok(json!({
         "workspace": ctx.workspace.root_display(),
         "active_project": relative_display(ctx.workspace.root(), &resolved),
         "project_root": resolved.display().to_string(),
-        "session_scoped": true
+        "session_scoped": true,
+        "rebound": existing.is_some(),
+        "already_bound": false
     })))
 }
 
@@ -191,7 +257,10 @@ pub fn discover_projects(ctx: &ToolContext, args: &Value) -> Result<Value, Works
     })))
 }
 
-fn resolve_project_directory(ctx: &ToolContext, raw: &str) -> Result<PathBuf, WorkspaceError> {
+fn resolve_project_binding(
+    ctx: &ToolContext,
+    raw: &str,
+) -> Result<(PathBuf, PathBuf), WorkspaceError> {
     if raw.contains('\0') {
         return Err(WorkspaceError::invalid_argument("Path contains a NUL byte"));
     }
@@ -214,7 +283,7 @@ fn resolve_project_directory(ctx: &ToolContext, raw: &str) -> Result<PathBuf, Wo
             "Active Project must be a directory",
         ));
     }
-    Ok(resolved)
+    Ok((candidate, resolved))
 }
 
 fn project_markers(dir: &Path) -> Vec<String> {

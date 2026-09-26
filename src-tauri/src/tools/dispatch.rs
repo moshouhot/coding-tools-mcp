@@ -208,7 +208,7 @@ fn call_tool_prepared(
                     "constraints": {
                         "mode": "dangerous",
                         "workspace": ctx.workspace.root_display(),
-                        "requested": effective_args
+                        "requested": strip_internal_context(effective_args.clone())
                     },
                     "warnings": [
                         "dangerous permission mode is enabled; permission-gated operations are auto-granted"
@@ -226,7 +226,7 @@ fn call_tool_prepared(
                         "message": "Permission elicitation is not available for this client.",
                         "category": "permission",
                         "retryable": false,
-                        "details": { "requested": effective_args }
+                        "details": { "requested": strip_internal_context(effective_args.clone()) }
                     }
                 })))
             }
@@ -398,8 +398,14 @@ fn apply_default_cwd(
     match name {
         "exec_command" => {
             if let Some(workdir) = effective.get("workdir").and_then(Value::as_str) {
+                if project::host_session_key(args).is_some() {
+                    ensure_exec_workdir_in_active_project(ctx, &active_project, workdir)?;
+                }
                 effective["workdir"] = Value::String(prefix_relative_path(&base, workdir));
             } else if let Some(cwd) = effective.get("cwd").and_then(Value::as_str) {
+                if project::host_session_key(args).is_some() {
+                    ensure_exec_workdir_in_active_project(ctx, &active_project, cwd)?;
+                }
                 effective["cwd"] = Value::String(prefix_relative_path(&base, cwd));
             } else {
                 effective["workdir"] = Value::String(base.clone());
@@ -422,6 +428,38 @@ fn apply_default_cwd(
         _ => {}
     }
     Ok(effective)
+}
+
+fn ensure_exec_workdir_in_active_project(
+    ctx: &ToolContext,
+    active_project: &Path,
+    raw: &str,
+) -> Result<(), WorkspaceError> {
+    let path = Path::new(raw);
+    let candidate = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        active_project.join(path)
+    };
+    let resolved = candidate.canonicalize().map_err(|_| {
+        WorkspaceError::invalid_argument("exec workdir does not exist or cannot be resolved")
+    })?;
+    if !resolved.starts_with(active_project) || !resolved.starts_with(ctx.workspace.root()) {
+        return Err(WorkspaceError::ToolDetails {
+            code: "ACTIVE_PROJECT_SCOPE_VIOLATION",
+            message: "Host-session exec workdir must stay inside the current Active Project."
+                .into(),
+            category: "validation",
+            retryable: true,
+            details: json!({
+                "active_project": active_project.display().to_string(),
+                "requested_workdir": raw,
+                "resolved_workdir": resolved.display().to_string(),
+                "suggestion": "Use read-only file tools for references to another project, or explicitly rebind before executing there."
+            }),
+        });
+    }
+    Ok(())
 }
 
 fn prefix_relative_path(base: &str, path: &str) -> String {

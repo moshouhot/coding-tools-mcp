@@ -68,7 +68,11 @@ If many projects live under the same parent directory, that parent can be used a
 
 Active Project state is scoped to the host conversation, so several Codex conversations can use the same Connector while working in different projects at the same time. An explicit user-designated project directory does not need `.git`, `package.json`, or `Cargo.toml`; `discover_projects` is only a fallback when the user gives a project name without an exact path, and automatic binding should happen only for a unique match.
 
-> Starting with `0.2.4-custom.5`, History / Harness become project-aware when a Session Active Project is bound: History defaults to that project's own `docs/history-session` and checkpoints validate project identity; Harness tasks, baselines, and operation logs use a project-specific identity while excluding History directories managed by Coding Tools MCP. Session → Active Project bindings are persisted locally and restored after restart; if a bound project becomes unavailable, the server fails explicitly instead of silently falling back to another project. Without a Session Active Project, the previous Workspace Pool fallback remains intact and existing data is not migrated or rewritten automatically.
+Starting with `0.2.4-custom.6`, the model is deliberately narrower: **one conversation is bound to one project by default**. The first explicit project is bound automatically; merely mentioning another full path later does not switch the Active Project. Rebinding requires an explicit user request and `allow_rebind=true`. Project-scoped host-session calls without a valid binding fail with `ACTIVE_PROJECT_REQUIRED` instead of silently using `default_cwd`. Explicit absolute paths may still be used for read-only references elsewhere in the Workspace Pool without changing the binding; `exec_command` `workdir/cwd` must stay inside the current Active Project, so execution in another project requires an explicit rebind first.
+
+Each Session binding is persisted in its own state file so restarts recover it and independent sessions do not overwrite one shared map. The original canonical target is also stored; if the same visible path is later replaced or redirected to another project, the server fails with `ACTIVE_PROJECT_TARGET_CHANGED`. History is fixed at `<Active Project>/docs/history-session`; arbitrary `history_dir` values are no longer supported. Harness therefore excludes only this reserved History directory, so History writes do not self-trigger baseline failures and source code cannot be exempted by supplying a custom History path.
+
+The `.5` second-review report and its original RED evidence remain preserved in the [re-review report](docs/verification/phase2-rereview-2026-09-26/REPORT.md) as the provenance for this `.6` remediation; old evidence is not rewritten.
 
 ### 3. Configure a public tunnel
 
@@ -111,17 +115,18 @@ When a connection fails, inspect recent MCP requests without leaving the desktop
 
 Use the public MCP URL shown by the app. With OAuth enabled, the client follows the server metadata into the authorization flow; authorization codes, Client IDs, and secrets can be generated and managed from the desktop client. This release uses preconfigured OAuth clients, so select static/manual OAuth credentials when creating a ChatGPT plugin; CIMD is not required.
 
-For a first connection, ask the agent to initialize history before inspecting the workspace:
+On first connection, bind the conversation's Active Project before initializing History when the user has explicitly identified a project. If the conversation has no identified project yet, limit work to project discovery/status diagnostics; do not use `default_cwd` as an implicit Active Project:
 
 ```text
+set_active_project (when the user has explicitly identified a project)
 history_session_bootstrap
 server_info
-get_default_cwd
+get_active_project
 git_status
 check_exec_environment
 ```
 
-This gives the agent explicit project and capability state instead of guessing from the current chat window.
+Preserve `session_key`, `current_path`, and `project_id` from bootstrap and pass them unchanged to checkpoints (`current_path` becomes `expected_path`). A conversation normally stays on one project. Only after an explicit user-requested switch should the agent call `set_active_project(..., allow_rebind=true)`, then bootstrap/resume History for the new project rather than reuse the old target.
 
 ## Two ways to connect ChatGPT
 

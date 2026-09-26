@@ -86,7 +86,7 @@ fn initialize_result() -> Value {
             "title": "Coding Tools MCP",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "Use these tools only for local coding operations inside the configured workspace. The configured workspace may be a pool containing many independent projects. When the user's request explicitly identifies a directory inside the workspace as the project, repository, repo, codebase, work tree, or clearly makes that directory the primary coding target, automatically call set_active_project with that directory before any project-scoped initialization or project work. The user's explicit directory designation is authoritative; do not require .git, package.json, Cargo.toml, or other project markers and do not ask for confirmation. Reuse the active project for later requests in the same conversation. Do not switch active project merely because the user incidentally references another file or directory. If the user names a project without a path, use discover_projects and auto-bind only when the match is unique. Active Project is scoped to the host conversation and persisted locally so other conversations may work in other projects through the same connector. If a previously bound project becomes unavailable, do not silently fall back to another project; rebind explicitly. History and Harness are project-aware when a Session Active Project exists; otherwise they retain the workspace-level fallback. At the start of every new ChatGPT conversation, before answering the user's first request, initialize project context first when the first request identifies a project, then call history_session_bootstrap exactly once and pass the user's verbatim first request as initial_user_input. Treat bootstrap as required conversation initialization: it creates or resumes a lossless Markdown archive under the active project when one is bound, and returns bounded current state, not all history. Use history_session_search followed by history_session_read only when exact earlier context is needed. history_session_read returns a bounded UTF-8-safe page; follow next_cursor with the returned content hash until the relevant archive is complete. Repeated successful bootstrap calls in the same project resume the same session and must not create duplicates. Preserve session_key, current_path, and project_id returned by bootstrap, then pass them unchanged as session_key, expected_path, and project_id to every history_session_checkpoint call. When this conversation switches Active Project, bootstrap/resume History for that project before checkpointing it. After completing each user-requested task in the conversation, call history_session_checkpoint before the final response and pass that user's verbatim request as raw_user_input. Only state that progress was saved after checkpoint returns ok=true with the same session_key, project_id, and path. The server cannot access ChatGPT transcript text that was not provided as a tool argument; persistence is not automatic background persistence."
+        "instructions": "Use these tools only for local coding operations inside the configured workspace. The workspace may be a pool containing many independent projects, but treat one host conversation as one project by default. For an unbound conversation, when the user explicitly identifies a project/repo/codebase directory or clearly makes one directory the primary coding target, call set_active_project before project-scoped work. Explicit paths are authoritative and do not require project markers. Once bound, keep that project for the conversation: merely mentioning or comparing another full path must not switch Active Project. Only when the user explicitly asks to switch the current project may you call set_active_project with allow_rebind=true. If an unbound user names only a project without a path, use discover_projects and auto-bind only a unique match. Host conversations never use default_cwd as an implicit Active Project; if the binding is missing or invalid, rebind explicitly. Active Project bindings are persisted per conversation. History and Harness follow the bound project. History is fixed at docs/history-session inside that project; do not choose or pass a custom history_dir. When the first project is known, bind it first and then call history_session_bootstrap with the user's verbatim initial request as initial_user_input. If no project can yet be identified, project-management diagnostics may run, but defer project-scoped History and coding tools until binding exists. Bootstrap creates or resumes the lossless project archive and returns bounded current state. Use history_session_search then history_session_read only when exact earlier context is needed, following next_cursor until the relevant source is complete. Preserve session_key, current_path, and project_id returned by bootstrap and pass them unchanged as session_key, expected_path, and project_id to history_session_checkpoint. After each user-requested project task, checkpoint with the user's verbatim raw_user_input before the final response. Only state that progress was saved after checkpoint returns ok=true with the same session_key, project_id, and path. The server cannot access transcript text that was not supplied as tool arguments; persistence is not automatic background persistence."
     })
 }
 
@@ -221,30 +221,26 @@ mod tests {
         let initialized = initialize_result();
         let instructions = initialized["instructions"].as_str().expect("instructions");
         assert!(instructions.contains("history_session_bootstrap"));
-        assert!(instructions.contains("At the start of every new ChatGPT conversation"));
-        assert!(instructions.contains("before answering the user's first request"));
-        assert!(instructions.contains("required conversation initialization"));
+        assert!(instructions.contains("one host conversation as one project by default"));
+        assert!(instructions.contains("allow_rebind=true"));
+        assert!(instructions.contains("must not switch Active Project"));
+        assert!(instructions.contains("never use default_cwd as an implicit Active Project"));
+        assert!(instructions.contains("History is fixed at docs/history-session"));
         assert!(instructions.contains("initial_user_input"));
-        assert!(instructions.contains("must not create duplicates"));
         assert!(instructions.contains("history_session_checkpoint"));
         assert!(instructions.contains("set_active_project"));
         assert!(instructions.contains("discover_projects"));
-        assert!(instructions.contains("Active Project is scoped to the host conversation"));
-        assert!(instructions.contains("History and Harness are project-aware"));
-        assert!(instructions.contains("do not ask for confirmation"));
         assert!(instructions.contains("raw_user_input"));
         assert!(instructions.contains("history_session_search"));
         assert!(instructions.contains("history_session_read"));
-        assert!(instructions.contains("follow next_cursor"));
-        assert!(instructions.contains("session_key, current_path, and project_id returned by bootstrap"));
+        assert!(instructions.contains("following next_cursor"));
+        assert!(instructions.contains("session_key, current_path, and project_id"));
         assert!(instructions.contains("session_key, expected_path, and project_id"));
-        assert!(instructions.contains("After completing each user-requested task"));
+        assert!(instructions.contains("After each user-requested project task"));
         assert!(instructions.contains("before the final response"));
         assert!(instructions.contains("checkpoint returns ok=true"));
         assert!(instructions.contains("not automatic background persistence"));
-        let bind_position = instructions
-            .find("initialize project context first")
-            .expect("project binding order");
+        let bind_position = instructions.find("bind it first").expect("project binding order");
         let bootstrap_position = instructions
             .find("then call history_session_bootstrap")
             .expect("bootstrap order");
@@ -263,13 +259,14 @@ mod tests {
         let component = include_str!("../../../src/lib/components/ChatGptSessionPrompt.svelte");
 
         assert!(component.contains("ChatGPT 新会话启动提示词"));
-        assert!(component.contains("请初始化或恢复当前项目会话"));
-        assert!(component.contains("如果没有历史记录"));
+        assert!(component.contains("一个对话只对应一个项目"));
+        assert!(component.contains("allow_rebind=true"));
+        assert!(component.contains("不要把 default_cwd 当成当前项目"));
+        assert!(component.contains("History 固定使用当前项目的 docs/history-session"));
         assert!(component.contains("initial_user_input"));
         assert!(component.contains("raw_user_input"));
         assert!(component.contains("history_session_search"));
         assert!(component.contains("history_session_checkpoint"));
-        assert!(component.contains("后续相对路径、History 和 Harness 都继续使用当前项目"));
         let bind_position = component.find("set_active_project").expect("set active project");
         let bootstrap_position = component
             .find("history_session_bootstrap")
@@ -329,6 +326,20 @@ mod tests {
             ),
             upstream: Arc::new(UpstreamMcpManager::empty()),
         });
+        let bound = handle_request(
+            &state,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "tools/call",
+                "params": {
+                    "name": "set_active_project",
+                    "arguments": {"path": "."},
+                    "_meta": {"openai/session": "chatgpt-session"}
+                }
+            }),
+        );
+        assert_eq!(bound["result"]["structuredContent"]["ok"], true);
         let response = handle_request(
             &state,
             &json!({

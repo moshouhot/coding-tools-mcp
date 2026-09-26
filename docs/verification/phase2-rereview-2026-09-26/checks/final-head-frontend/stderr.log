@@ -1,0 +1,2 @@
+The following Vite config options will be overridden by SvelteKit:
+  - root

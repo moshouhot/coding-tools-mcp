@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -6,6 +5,8 @@ use std::sync::{Arc, Mutex};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::audit::AuditStore;
 use crate::harness::{Harness, HarnessResult};
@@ -14,27 +15,45 @@ use crate::tools::session::SessionStore;
 use crate::tools::workspace::{relative_display, Workspace, WorkspaceError, WorkspaceResult};
 use crate::workspace::AuthConfig;
 
-#[derive(Clone, Default, Deserialize, Serialize)]
-struct ActiveProjectSessions {
-    paths: HashMap<String, PathBuf>,
+#[derive(Clone, Deserialize, Serialize)]
+struct ActiveProjectBinding {
+    version: u8,
+    session_key: String,
+    binding_path: PathBuf,
+    canonical_target: PathBuf,
 }
 
-#[derive(Clone, Default, Deserialize, Serialize)]
-struct ManagedProjectPaths {
-    paths: HashMap<String, Vec<PathBuf>>,
+fn active_project_required(session_key: &str) -> WorkspaceError {
+    WorkspaceError::ToolDetails {
+        code: "ACTIVE_PROJECT_REQUIRED",
+        message: "This conversation has no Active Project binding; refusing to fall back to default_cwd.".into(),
+        category: "state",
+        retryable: true,
+        details: json!({
+            "session_key": session_key,
+            "suggestion": "Bind the conversation with set_active_project before project-scoped work."
+        }),
+    }
 }
 
-impl ActiveProjectSessions {
-    fn get(&self, session_key: &str) -> Option<PathBuf> {
-        self.paths.get(session_key).cloned()
-    }
-
-    fn contains_key(&self, session_key: &str) -> bool {
-        self.paths.contains_key(session_key)
-    }
-
-    fn insert(&mut self, session_key: String, path: PathBuf) {
-        self.paths.insert(session_key, path);
+fn active_project_target_changed(
+    session_key: &str,
+    binding_path: &std::path::Path,
+    expected: &std::path::Path,
+    actual: &std::path::Path,
+) -> WorkspaceError {
+    WorkspaceError::ToolDetails {
+        code: "ACTIVE_PROJECT_TARGET_CHANGED",
+        message: "The bound project path now resolves to a different target; refusing to follow it silently.".into(),
+        category: "state",
+        retryable: true,
+        details: json!({
+            "session_key": session_key,
+            "binding_path": binding_path.display().to_string(),
+            "expected_target": expected.display().to_string(),
+            "actual_target": actual.display().to_string(),
+            "suggestion": "Verify the path and explicitly rebind the conversation if the change is intentional."
+        }),
     }
 }
 
@@ -50,11 +69,7 @@ pub struct ToolContext {
     audit: Option<AuditStore>,
     audit_workspace_id: String,
     default_cwd: Mutex<PathBuf>,
-    active_projects: Mutex<ActiveProjectSessions>,
-    active_projects_file: PathBuf,
-    active_projects_load_error: Mutex<Option<String>>,
-    managed_project_paths: Mutex<HashMap<PathBuf, Vec<PathBuf>>>,
-    managed_project_paths_file: PathBuf,
+    active_projects_dir: PathBuf,
     pub sessions: Arc<SessionStore>,
 }
 
@@ -105,25 +120,10 @@ impl ToolContext {
         let root = workspace.root().to_path_buf();
         let harness = Harness::new(root.clone(), harness_root).expect("无法初始化 Harness");
         let audit_workspace_id = harness.workspace_id().to_string();
-        let active_projects_file = harness
+        let active_projects_dir = harness
             .store_root()
             .join("active-project-sessions")
-            .join(format!("{}.json", harness.workspace_id()));
-        let (active_projects, active_projects_load_error) = load_json_state(&active_projects_file)
-            .map(|value| (value.unwrap_or_default(), None))
-            .unwrap_or_else(|error| (ActiveProjectSessions::default(), Some(error)));
-        let managed_project_paths_file = harness
-            .store_root()
-            .join("managed-project-paths")
-            .join(format!("{}.json", harness.workspace_id()));
-        let managed_project_paths = load_json_state::<ManagedProjectPaths>(&managed_project_paths_file)
-            .ok()
-            .flatten()
-            .unwrap_or_default()
-            .paths
-            .into_iter()
-            .map(|(root, paths)| (PathBuf::from(root), paths))
-            .collect();
+            .join(harness.workspace_id());
         Self {
             workspace,
             auth,
@@ -134,11 +134,7 @@ impl ToolContext {
             audit: None,
             audit_workspace_id,
             default_cwd: Mutex::new(root),
-            active_projects: Mutex::new(active_projects),
-            active_projects_file,
-            active_projects_load_error: Mutex::new(active_projects_load_error),
-            managed_project_paths: Mutex::new(managed_project_paths),
-            managed_project_paths_file,
+            active_projects_dir,
             sessions: Arc::new(SessionStore::new()),
         }
     }
@@ -197,31 +193,9 @@ impl ToolContext {
 
     pub fn active_project_path(&self, session_key: Option<&str>) -> WorkspaceResult<PathBuf> {
         if let Some(session_key) = session_key.map(str::trim).filter(|value| !value.is_empty()) {
-            if let Some(path) = self
-                .active_projects
-                .lock()
-                .expect("active project lock")
-                .get(session_key)
-            {
-                return self.validate_bound_project(session_key, &path);
-            }
-            if let Some(error) = self
-                .active_projects_load_error
-                .lock()
-                .expect("active project store error lock")
-                .clone()
-            {
-                return Err(WorkspaceError::ToolDetails {
-                    code: "ACTIVE_PROJECT_STORE_UNAVAILABLE",
-                    message: "Persisted Active Project bindings could not be loaded; refusing to fall back silently.".into(),
-                    category: "state",
-                    retryable: true,
-                    details: json!({
-                        "reason": error,
-                        "suggestion": "Call set_active_project for this conversation to repair its binding."
-                    }),
-                });
-            }
+            return self
+                .session_active_project_path(session_key)?
+                .ok_or_else(|| active_project_required(session_key));
         }
         Ok(self.default_cwd_path())
     }
@@ -232,10 +206,8 @@ impl ToolContext {
     }
 
     pub fn has_session_active_project(&self, session_key: &str) -> bool {
-        self.active_projects
-            .lock()
-            .expect("active project lock")
-            .contains_key(session_key)
+        let path = self.active_project_binding_file(session_key);
+        path.exists() || path.with_extension("json.bak").exists()
     }
 
     pub fn set_session_active_project(
@@ -243,21 +215,49 @@ impl ToolContext {
         session_key: &str,
         path: PathBuf,
     ) -> WorkspaceResult<()> {
-        let mut guard = self.active_projects.lock().expect("active project lock");
-        let mut next = guard.clone();
-        next.insert(session_key.to_string(), path);
-        persist_json_state(&self.active_projects_file, &next)
-            .map_err(active_project_store_error)?;
-        *guard = next;
-        Ok(())
+        let canonical = path
+            .canonicalize()
+            .map_err(|_| active_project_unavailable(session_key, &path))?;
+        self.set_session_active_project_binding(session_key, path, canonical)
+    }
+
+    pub fn set_session_active_project_binding(
+        &self,
+        session_key: &str,
+        binding_path: PathBuf,
+        canonical_target: PathBuf,
+    ) -> WorkspaceResult<()> {
+        let binding = ActiveProjectBinding {
+            version: 1,
+            session_key: session_key.to_string(),
+            binding_path,
+            canonical_target,
+        };
+        persist_json_state(&self.active_project_binding_file(session_key), &binding)
+            .map_err(active_project_store_error)
+    }
+
+    pub fn session_active_project_path(
+        &self,
+        session_key: &str,
+    ) -> WorkspaceResult<Option<PathBuf>> {
+        let Some(binding) = self.load_active_project_binding(session_key)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.validate_bound_project(session_key, &binding)?))
+    }
+
+    pub fn stored_session_project_target(
+        &self,
+        session_key: &str,
+    ) -> WorkspaceResult<Option<PathBuf>> {
+        Ok(self
+            .load_active_project_binding(session_key)?
+            .map(|binding| binding.canonical_target))
     }
 
     pub fn harness_for_session(&self, session_key: Option<&str>) -> HarnessResult<Harness> {
-        let Some(session_key) = session_key
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .filter(|value| self.has_session_active_project(value))
-        else {
+        let Some(session_key) = session_key.map(str::trim).filter(|value| !value.is_empty()) else {
             return Ok(self.harness.clone());
         };
         let project_root = self.active_project_path(Some(session_key)).map_err(|error| {
@@ -270,71 +270,74 @@ impl ToolContext {
         if project_root == self.workspace.root() {
             return Ok(self.harness.clone());
         }
-        let ignored_paths = self.managed_paths_for(project_root);
-        Harness::new_with_ignored_paths(
+        Harness::new(
             project_root.to_path_buf(),
             self.harness.store_root().to_path_buf(),
-            ignored_paths,
         )
-    }
-
-    pub fn register_managed_project_path(
-        &self,
-        project_root: &std::path::Path,
-        managed_path: &std::path::Path,
-    ) -> WorkspaceResult<()> {
-        if !managed_path.starts_with(project_root) {
-            return Err(WorkspaceError::path_outside_workspace());
-        }
-        let mut registry = self
-            .managed_project_paths
-            .lock()
-            .expect("managed project paths lock");
-        let mut next = registry.clone();
-        let paths = next.entry(project_root.to_path_buf()).or_default();
-        if !paths.iter().any(|existing| existing == managed_path) {
-            paths.push(managed_path.to_path_buf());
-        }
-        let persisted = ManagedProjectPaths {
-            paths: next
-                .iter()
-                .map(|(root, paths)| (root.to_string_lossy().into_owned(), paths.clone()))
-                .collect(),
-        };
-        persist_json_state(&self.managed_project_paths_file, &persisted).map_err(|reason| {
-            WorkspaceError::ToolDetails {
-                code: "MANAGED_PROJECT_PATH_STORE_UNAVAILABLE",
-                message: "Unable to persist managed project path metadata.".into(),
-                category: "state",
-                retryable: true,
-                details: json!({"reason": reason}),
-            }
-        })?;
-        *registry = next;
-        Ok(())
     }
 
     pub fn audit_store(&self) -> Option<AuditStore> {
         self.audit.clone()
     }
 
-    fn validate_bound_project(&self, session_key: &str, path: &PathBuf) -> WorkspaceResult<PathBuf> {
-        let canonical = path
-            .canonicalize()
-            .map_err(|_| active_project_unavailable(session_key, path))?;
-        if !canonical.is_dir() || !canonical.starts_with(self.workspace.root()) {
-            return Err(active_project_unavailable(session_key, path));
-        }
-        Ok(canonical)
+    fn active_project_binding_file(&self, session_key: &str) -> PathBuf {
+        let digest = Sha256::digest(session_key.as_bytes());
+        self.active_projects_dir.join(format!("{digest:x}.json"))
     }
 
-    fn managed_paths_for(&self, project_root: &std::path::Path) -> Vec<PathBuf> {
-        self.managed_project_paths
-            .lock()
-            .expect("managed project paths lock")
-            .get(project_root)
-            .cloned()
-            .unwrap_or_default()
+    fn load_active_project_binding(
+        &self,
+        session_key: &str,
+    ) -> WorkspaceResult<Option<ActiveProjectBinding>> {
+        let path = self.active_project_binding_file(session_key);
+        let binding = load_json_state::<ActiveProjectBinding>(&path).map_err(|reason| {
+            WorkspaceError::ToolDetails {
+                code: "ACTIVE_PROJECT_STORE_UNAVAILABLE",
+                message: "Unable to load this conversation's Active Project binding.".into(),
+                category: "state",
+                retryable: true,
+                details: json!({
+                    "reason": reason,
+                    "suggestion": "After confirming the intended project, explicitly repair this conversation with set_active_project and allow_rebind=true."
+                }),
+            }
+        })?;
+        let Some(binding) = binding else {
+            return Ok(None);
+        };
+        if binding.session_key != session_key {
+            return Err(WorkspaceError::ToolDetails {
+                code: "ACTIVE_PROJECT_STORE_UNAVAILABLE",
+                message: "Active Project binding identity mismatch.".into(),
+                category: "state",
+                retryable: false,
+                details: json!({"suggestion": "Explicitly rebind this conversation."}),
+            });
+        }
+        Ok(Some(binding))
+    }
+
+    fn validate_bound_project(
+        &self,
+        session_key: &str,
+        binding: &ActiveProjectBinding,
+    ) -> WorkspaceResult<PathBuf> {
+        let canonical = binding
+            .binding_path
+            .canonicalize()
+            .map_err(|_| active_project_unavailable(session_key, &binding.binding_path))?;
+        if !canonical.is_dir() || !canonical.starts_with(self.workspace.root()) {
+            return Err(active_project_unavailable(session_key, &binding.binding_path));
+        }
+        if canonical != binding.canonical_target {
+            return Err(active_project_target_changed(
+                session_key,
+                &binding.binding_path,
+                &binding.canonical_target,
+                &canonical,
+            ));
+        }
+        Ok(canonical)
     }
 }
 
@@ -364,7 +367,7 @@ fn persist_json_state<T: Serialize>(path: &std::path::Path, value: &T) -> Result
         .ok_or_else(|| "state file has no parent directory".to_string())?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     let bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
-    let temp = path.with_extension("json.tmp");
+    let temp = path.with_extension(format!("json.{}.tmp", Uuid::new_v4().simple()));
     let backup = path.with_extension("json.bak");
     fs::write(&temp, bytes).map_err(|error| error.to_string())?;
     if path.exists() {
