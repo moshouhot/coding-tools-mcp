@@ -13,6 +13,59 @@ fn dangerous_context(pool: &Path, harness: &Path) -> ToolContext {
 }
 
 #[test]
+fn cross_project_absolute_read_is_allowed_but_exec_workdir_is_not() {
+    let temp = tempfile::tempdir().unwrap();
+    let pool = temp.path().join("pool");
+    let harness = temp.path().join("harness");
+    for project in ["alpha", "beta"] {
+        fs::create_dir_all(pool.join(project)).unwrap();
+        fs::write(pool.join(project).join("name.txt"), project).unwrap();
+    }
+    let ctx = dangerous_context(&pool, &harness);
+    ok(call(
+        &ctx,
+        "chat",
+        "set_active_project",
+        json!({"path": "alpha"}),
+    ));
+
+    let beta_file = pool.join("beta/name.txt").canonicalize().unwrap();
+    let reference = ok(call(
+        &ctx,
+        "chat",
+        "read_file",
+        json!({"path": beta_file.display().to_string()}),
+    ));
+    assert_eq!(reference["content"], "beta");
+    assert_eq!(
+        ok(call(&ctx, "chat", "get_active_project", json!({})))["active_project"],
+        "alpha"
+    );
+
+    let beta_dir = pool.join("beta").canonicalize().unwrap();
+    let exec = call(
+        &ctx,
+        "chat",
+        "exec_command",
+        json!({"cmd": "pwd", "workdir": beta_dir.display().to_string()}),
+    );
+    assert_eq!(exec["ok"], false, "{exec}");
+    assert_eq!(exec["error"]["code"], "ACTIVE_PROJECT_SCOPE_VIOLATION");
+
+    let relative_escape = call(
+        &ctx,
+        "chat",
+        "exec_command",
+        json!({"cmd": "pwd", "workdir": "../beta"}),
+    );
+    assert_eq!(relative_escape["ok"], false, "{relative_escape}");
+    assert_eq!(
+        relative_escape["error"]["code"],
+        "ACTIVE_PROJECT_SCOPE_VIOLATION"
+    );
+}
+
+#[test]
 fn same_project_reselection_refreshes_a_stale_alias_path() {
     let temp = tempfile::tempdir().unwrap();
     let pool = temp.path().join("pool");

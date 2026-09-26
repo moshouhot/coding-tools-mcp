@@ -68,7 +68,7 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 
 Active Project 按宿主会话隔离，所以多个 Codex 对话可以通过同一个 Connector 同时操作不同项目；用户明确给出的项目目录不要求存在 `.git`、`package.json` 或 `Cargo.toml`。只有在用户仅提供项目名而没有路径时，AI 才需要调用 `discover_projects` 辅助查找并在唯一匹配时自动绑定。
 
-`0.2.4-custom.6` 起采用更窄、更安全的规则：**一个对话默认只绑定一个项目**。首次明确项目后自动绑定；后续即使提到另一个完整路径也不会自动切换。只有用户明确要求“切换当前项目”时，Agent 才能用 `allow_rebind=true` 显式重绑。带宿主 Session 的项目操作如果没有有效绑定会返回 `ACTIVE_PROJECT_REQUIRED`，绝不把 `default_cwd` 当成当前项目继续执行。显式绝对路径仍可用于只读查看 Workspace Pool 中的其他文件，不会改变当前绑定。
+`0.2.4-custom.6` 起采用更窄、更安全的规则：**一个对话默认只绑定一个项目**。首次明确项目后自动绑定；后续即使提到另一个完整路径也不会自动切换。只有用户明确要求“切换当前项目”时，Agent 才能用 `allow_rebind=true` 显式重绑。带宿主 Session 的项目操作如果没有有效绑定会返回 `ACTIVE_PROJECT_REQUIRED`，绝不把 `default_cwd` 当成当前项目继续执行。显式绝对路径仍可用于只读查看 Workspace Pool 中的其他文件，不会改变当前绑定；`exec_command` 的 `workdir/cwd` 则必须留在当前 Active Project 内，要去另一个项目执行必须先显式重绑。
 
 每个 Session 的绑定独立持久化到自己的状态文件，程序重启后恢复，彼此不会整表覆盖；绑定时还会记录首次解析到的真实目录目标，后续如果同一路径被链接或替换成另一个项目，会返回 `ACTIVE_PROJECT_TARGET_CHANGED` 而不是静默跟随。History 固定在 `<Active Project>/docs/history-session`，不再支持任意 `history_dir`；Harness 只排除这个固定的系统历史目录，因此 History 自己写入不会触发基线误报，也不能借自定义目录把真实源码排除出检查。
 
