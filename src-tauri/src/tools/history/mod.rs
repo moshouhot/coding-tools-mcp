@@ -742,8 +742,29 @@ fn required_checkpoint_argument(args: &Value, name: &str) -> WorkspaceResult<Str
 }
 
 fn resolve_scope(ctx: &ToolContext, args: &Value) -> WorkspaceResult<(Workspace, std::path::PathBuf)> {
-    let active_session = host_session_key(args)
-        .filter(|session_key| ctx.has_session_active_project(session_key));
+    if let Some(raw) = args.get("history_dir").and_then(Value::as_str) {
+        if raw.trim().replace('\\', "/") != storage::DEFAULT_HISTORY_DIR {
+            return Err(history_error(
+                "HISTORY_DIR_FIXED",
+                "History location is fixed to docs/history-session for project-scoped conversations.",
+                "validation",
+                false,
+                json!({
+                    "history_dir": storage::DEFAULT_HISTORY_DIR,
+                    "suggestion": "Remove the custom history_dir argument."
+                }),
+            ));
+        }
+    }
+    let host_session = host_session_key(args);
+    if let Some(session_key) = host_session {
+        if !ctx.has_session_active_project(session_key) {
+            // Keep History fail-closed even if this internal function is ever
+            // called outside the normal dispatcher path.
+            ctx.active_project_path(Some(session_key))?;
+        }
+    }
+    let active_session = host_session.filter(|session_key| ctx.has_session_active_project(session_key));
     let project_root = match active_session {
         Some(_) => crate::tools::project::effective_project_root(ctx, args)?,
         None => ctx.workspace.root().to_path_buf(),
@@ -758,9 +779,8 @@ fn resolve_scope(ctx: &ToolContext, args: &Value) -> WorkspaceResult<(Workspace,
     let history_dir = storage::resolve_history_dir(
         &history_workspace,
         active_session.is_none().then_some(requested_workspace_root).flatten(),
-        args.get("history_dir").and_then(Value::as_str),
+        None,
     )?;
-    ctx.register_managed_project_path(history_workspace.root(), &history_dir)?;
     Ok((history_workspace, history_dir))
 }
 

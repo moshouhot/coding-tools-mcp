@@ -68,9 +68,11 @@ macOS 安装包目前未签名。如果系统阻止首次打开，请在“系�
 
 Active Project 按宿主会话隔离，所以多个 Codex 对话可以通过同一个 Connector 同时操作不同项目；用户明确给出的项目目录不要求存在 `.git`、`package.json` 或 `Cargo.toml`。只有在用户仅提供项目名而没有路径时，AI 才需要调用 `discover_projects` 辅助查找并在唯一匹配时自动绑定。
 
-> `0.2.4-custom.5` 起，History / Harness 会在 Session Active Project 已绑定时按项目下沉：History 默认写入该项目自己的 `docs/history-session`，checkpoint 同时校验项目 identity；Harness Task / baseline / operation log 使用项目根生成独立 identity，并排除 Coding Tools MCP 自己维护的 History 目录。Session → Active Project 绑定会在本机持久化，程序重启后恢复；已绑定项目失效时明确报错，绝不静默 fallback 到另一个项目。没有 Session Active Project 时仍保留 Workspace Pool 级 fallback，旧数据不会被自动迁移或改写。
+`0.2.4-custom.6` 起采用更窄、更安全的规则：**一个对话默认只绑定一个项目**。首次明确项目后自动绑定；后续即使提到另一个完整路径也不会自动切换。只有用户明确要求“切换当前项目”时，Agent 才能用 `allow_rebind=true` 显式重绑。带宿主 Session 的项目操作如果没有有效绑定会返回 `ACTIVE_PROJECT_REQUIRED`，绝不把 `default_cwd` 当成当前项目继续执行。显式绝对路径仍可用于只读查看 Workspace Pool 中的其他文件，不会改变当前绑定。
 
-> 候选验收状态：`.5` 第二轮复审发现恢复与目录归属的边界缺陷，上述行为说明不是完整验收保证。当前暂缓正式实机验收，见 [复审报告](docs/verification/phase2-rereview-2026-09-26/REPORT.md)。
+每个 Session 的绑定独立持久化到自己的状态文件，程序重启后恢复，彼此不会整表覆盖；绑定时还会记录首次解析到的真实目录目标，后续如果同一路径被链接或替换成另一个项目，会返回 `ACTIVE_PROJECT_TARGET_CHANGED` 而不是静默跟随。History 固定在 `<Active Project>/docs/history-session`，不再支持任意 `history_dir`；Harness 只排除这个固定的系统历史目录，因此 History 自己写入不会触发基线误报，也不能借自定义目录把真实源码排除出检查。
+
+`.5` 的第二轮复审及原始 RED 证据仍保留在 [复审报告](docs/verification/phase2-rereview-2026-09-26/REPORT.md)，用于说明 `.6` 这次整改的来源；不回写或覆盖旧证据。
 
 ### 3. 配置公网隧道
 
@@ -113,19 +115,18 @@ Active Project 按宿主会话隔离，所以多个 Codex 对话可以通过同�
 
 支持 MCP 的客户端使用界面中的公网 MCP URL。使用 OAuth 时，客户端会通过服务端元数据进入授权流程；授权口令、Client ID 和 Secret 均可在桌面端集中生成和管理。当前版本使用预配置 OAuth 客户端，创建 ChatGPT 插件时应选择静态/手动 OAuth 凭据，不需要选择 CIMD。
 
-首次连接时，如果用户已经明确指定项目，先绑定当前对话的项目，再初始化该项目的历史。未指定项目时才保留工作区级默认行为：
+首次连接时，如果用户已经明确指定项目，先绑定当前对话的项目，再初始化该项目的历史。若当前对话还没有明确项目，只做项目发现/状态诊断，不使用 `default_cwd` 代替 Active Project：
 
 ```text
 set_active_project（用户已明确指定项目时）
 history_session_bootstrap
 server_info
-get_default_cwd
 get_active_project
 git_status
 check_exec_environment
 ```
 
-保存 bootstrap 返回的 `session_key`、`current_path` 和 `project_id`；checkpoint 时原样传回（`current_path` 对应 `expected_path`）。同一对话明确切换项目后，先为新项目重新 bootstrap/resume，不沿用旧项目的检查点目标。这样 Agent 不需要依赖聊天上下文猜测当前项目、工作目录和执行能力。
+保存 bootstrap 返回的 `session_key`、`current_path` 和 `project_id`；checkpoint 时原样传回（`current_path` 对应 `expected_path`）。普通情况下一个对话不切项目；只有用户明确要求切换时才调用 `set_active_project(..., allow_rebind=true)`，随后为新项目重新 bootstrap/resume，不沿用旧项目的检查点目标。
 
 ## ChatGPT 的两种接入方式
 

@@ -30,6 +30,11 @@ fn test_context() -> (tempfile::TempDir, tempfile::TempDir, ToolContext) {
 fn bootstrap_prefers_host_session_and_preserves_initial_input() {
     let (workspace, _harness, ctx) = test_context();
     let first_request = "修复 bootstrap，首轮输入必须完整保存";
+    invoke_ok(
+        &ctx,
+        "set_active_project",
+        json!({"path": ".", "_host_session_key": "chatgpt-session"}),
+    );
     let boot = invoke(
         &ctx,
         "history_session_bootstrap",
@@ -527,7 +532,7 @@ fn checkpoint_rejects_a_path_from_another_session() {
 }
 
 #[test]
-fn workspace_root_and_history_paths_cannot_escape_workspace() {
+fn workspace_root_cannot_escape_and_history_dir_is_fixed() {
     let (workspace, _harness, ctx) = test_context();
     let relative = invoke_ok(
         &ctx,
@@ -554,7 +559,7 @@ fn workspace_root_and_history_paths_cannot_escape_workspace() {
     );
     assert_eq!(
         assert_err(&traversal)["error"]["code"],
-        "PATH_OUTSIDE_WORKSPACE"
+        "HISTORY_DIR_FIXED"
     );
 }
 
