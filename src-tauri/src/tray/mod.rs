@@ -133,7 +133,7 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
         .icon(icon::image_for(app.handle(), Level::Stopped))
         .on_menu_event(|app, event| match event.id.as_ref() {
             ID_SHOW => {
-                let _ = crate::commands::window_chrome::show_main_window(app.clone());
+                crate::commands::window_chrome::request_show_main_window(app.clone());
             }
             ID_AUTOSTART => on_toggle_autostart(app),
             ID_QUIT => {
@@ -149,7 +149,7 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
                 ..
             } = event
             {
-                let _ = crate::commands::window_chrome::show_main_window(tray.app_handle().clone());
+                crate::commands::window_chrome::request_show_main_window(tray.app_handle().clone());
             }
         })
         .build(app)?;

@@ -13,6 +13,9 @@ static UI_RECREATING: AtomicBool = AtomicBool::new(false);
 
 const KEEPALIVE_LABEL: &str = "__ui_recreate_keepalive__";
 
+/// Serialize tray recovery with WebView replacement, including its destroy gap.
+pub(crate) static UI_WINDOW_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 pub fn should_prevent_exit() -> bool {
     UI_RECREATING.load(Ordering::SeqCst)
 }
@@ -91,6 +94,7 @@ pub fn get_webview_memory_sample() -> AppResult<WebviewMemorySample> {
 /// keepalive window first so "last window closed" never fires for the main UI.
 #[command]
 pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
+    let _window_guard = UI_WINDOW_GATE.lock().await;
     let _guard = RecreateGuard::enter();
 
     // Drop any leftover keepalive from a previous failed attempt.
@@ -188,6 +192,14 @@ pub async fn recreate_ui_webview(app: AppHandle) -> AppResult<()> {
     let _ = new_window.show();
     if is_maximized && !was_minimized && !was_hidden {
         let _ = new_window.maximize();
+    }
+
+    // A queued build may return a handle even if native WebView creation fails.
+    // Keep the live keepalive until the replacement responds to a getter.
+    if !new_window.is_visible().map_err(|err| {
+        AppError::Message(format!("replacement webview is unavailable: {err}"))
+    })? {
+        return Err(AppError::Message("replacement webview is not visible".into()));
     }
 
     // Remove keepalive only after main is back.
