@@ -270,9 +270,28 @@ pub(crate) async fn start_mcp_by_id(
     id: &str,
 ) -> AppResult<RuntimeStatusDto> {
     let result = start_mcp_service(state, id).await;
+    crate::lifecycle::record(&match &result {
+        Ok(status) => format!(
+            "MCP 启动 workspace={id} state={} pid={:?}",
+            status.state, status.pid
+        ),
+        Err(error) => format!("MCP 启动失败 workspace={id}: {error}"),
+    });
     // 转换完成立即记录，不等下一轮轮询（否则这 5 秒内退出会留下陈旧记录）。
     crate::tray::record_after_transition();
     result
+}
+
+/// 按服务类型启动，供保活循环复用同一套启动逻辑。
+pub(crate) async fn start_by_kind(
+    state: &AppState,
+    id: &str,
+    kind: ServiceKind,
+) -> AppResult<RuntimeStatusDto> {
+    match kind {
+        ServiceKind::Mcp => start_mcp_service(state, id).await,
+        ServiceKind::Actions => start_actions_service(state, id).await,
+    }
 }
 
 #[tauri::command]
@@ -285,6 +304,10 @@ pub async fn start_runtime(state: State<'_, AppState>, id: String) -> AppResult<
 #[tauri::command]
 pub async fn stop_runtime(state: State<'_, AppState>, id: String) -> AppResult<RuntimeStatusDto> {
     let result = stop_mcp_service(&state, &id).await;
+    crate::lifecycle::record(&match &result {
+        Ok(_) => format!("MCP 已停止 workspace={id}"),
+        Err(error) => format!("MCP 停止失败 workspace={id}: {error}"),
+    });
     crate::tray::record_after_transition();
     result
 }

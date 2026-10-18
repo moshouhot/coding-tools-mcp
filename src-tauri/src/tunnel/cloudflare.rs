@@ -17,6 +17,8 @@ pub struct CloudflareTunnelHandle {
     pub child: Child,
     pub public_url: String,
     pub pid: Option<u32>,
+    /// 本次 spawn 固定下来的 metrics 端口，供健康探测按端口回查。
+    pub metrics_port: u16,
 }
 
 pub fn resolve_cloudflared() -> AppResult<PathBuf> {
@@ -233,6 +235,7 @@ pub async fn spawn_cloudflare_tunnel(
     named_public_url: &str,
     use_proxy: bool,
     use_http2: bool,
+    metrics_port: u16,
 ) -> AppResult<CloudflareTunnelHandle> {
     let cloudflared = resolve_cloudflared()?;
     let quick = cloudflare_mode != "named";
@@ -273,6 +276,9 @@ pub async fn spawn_cloudflare_tunnel(
     }
 
     push_cloudflare_protocol_args(&mut cmd, use_http2);
+    // 固定 metrics 端口：健康判定要用 /ready 回查，
+    // 不能依赖 cloudflared 的默认候选序列（多实例会互抢）。
+    cmd.args(["--metrics", &format!("127.0.0.1:{metrics_port}")]);
 
     if quick {
         cmd.args([
@@ -347,6 +353,7 @@ pub async fn spawn_cloudflare_tunnel(
         child,
         public_url,
         pid,
+        metrics_port,
     })
 }
 

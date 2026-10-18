@@ -34,15 +34,29 @@ impl TunnelServiceKind {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TunnelStatus {
+    /// 服务是否处于「被管理且进程存活」状态。
+    ///
+    /// 注意：`running` **不代表隧道在线**。判断能否从公网访问必须看 `ready`。
+    /// 现场故障就是进程活着但 edge 连接为 0，只报 state 会误导成正常。
     pub state: String,
     pub public_url: String,
     pub tunnel_pid: Option<u32>,
+    /// 隧道是否真的与边缘建立连接（Cloudflare 用 /ready 判；FRP 由健康探测判）。
+    ///
+    /// `None` 表示尚未探测或该链路不适用。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ready: Option<bool>,
+    /// 未就绪时的原因，供 UI / 日志说明"为什么连不上"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ready_detail: Option<String>,
 }
 
 struct TunnelSession {
     public_url: String,
     pid: Option<u32>,
     child: Option<Child>,
+    /// Cloudflare 隧道固定的 metrics 端口（FRP 无此概念，为 None）。
+    metrics_port: Option<u16>,
 }
 
 struct FrpRoute {
@@ -69,6 +83,11 @@ enum FrpcHealthVerdict {
 
 pub struct TunnelSupervisor {
     sessions: HashMap<(String, TunnelServiceKind), TunnelSession>,
+    /// Cloudflare 隧道最近一次 `/ready` 探测结果。
+    ///
+    /// `status()` 是同步方法（被命令层与 UI 直接调用），不能在里面 await，
+    /// 因此由后台健康循环写入、`status()` 只读。
+    readiness: HashMap<(String, TunnelServiceKind), crate::tunnel::TunnelReadiness>,
     frp_routes: HashMap<(String, TunnelServiceKind), FrpRoute>,
     frpc: HashMap<String, FrpcProcess>,
     frpc_health: HashMap<String, FrpcHealthState>,
@@ -89,6 +108,7 @@ impl TunnelSupervisor {
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
+            readiness: HashMap::new(),
             frp_routes: HashMap::new(),
             frpc: HashMap::new(),
             frpc_health: HashMap::new(),
@@ -344,10 +364,13 @@ impl TunnelSupervisor {
         let key = (profile.id.clone(), kind);
         if self.session_is_running(&key) {
             if let Some(session) = self.sessions.get(&key) {
+                let readiness = self.readiness.get(&key);
                 return TunnelStatus {
                     state: "running".into(),
                     public_url: session.public_url.clone(),
                     tunnel_pid: session.pid,
+                    ready: readiness.map(|r| r.is_ready()),
+                    ready_detail: readiness.and_then(readiness_detail),
                 };
             }
         }
@@ -356,6 +379,8 @@ impl TunnelSupervisor {
             state: "stopped".into(),
             public_url: public_url_for_profile(profile, kind, settings),
             tunnel_pid: None,
+            ready: None,
+            ready_detail: None,
         }
     }
 
@@ -446,12 +471,17 @@ impl TunnelSupervisor {
                     public_url: public_url.clone(),
                     pid,
                     child: None,
+                    // FRP 路由没有 cloudflared metrics 端点。
+                    metrics_port: None,
                 },
             );
             return Ok(TunnelStatus {
                 state: "running".into(),
                 public_url,
                 tunnel_pid: pid,
+                // FRP 就绪由健康探测判定，此处不预判。
+                ready: None,
+                ready_detail: None,
             });
         }
 
@@ -470,6 +500,8 @@ impl TunnelSupervisor {
         let use_proxy = tunnel_use_proxy(profile, kind);
         let use_http2 = tunnel_cloudflare_http2(profile, kind);
         let log_path = log_dir_for_profile(&profile.id).join(log_name);
+        // metrics 端口按工作区稳定分配，健康判定据此回查 /ready。
+        let metrics_port = crate::tunnel::metrics_port_for(&profile.id);
         let handle = cloudflare::spawn_cloudflare_tunnel(
             port,
             std::path::Path::new(&profile.path),
@@ -479,6 +511,7 @@ impl TunnelSupervisor {
             &named_url,
             use_proxy,
             use_http2,
+            metrics_port,
         )
         .await
         .inspect_err(|_| {
@@ -489,7 +522,11 @@ impl TunnelSupervisor {
             child,
             public_url,
             pid,
+            metrics_port,
         } = handle;
+
+        // 新进程刚起，尚无 /ready 结论：先清掉旧缓存，避免沿用上一轮的"在线"。
+        self.readiness.remove(&key);
 
         self.sessions.insert(
             key,
@@ -497,6 +534,7 @@ impl TunnelSupervisor {
                 public_url: public_url.clone(),
                 pid,
                 child: Some(child),
+                metrics_port: Some(metrics_port),
             },
         );
 
@@ -504,6 +542,8 @@ impl TunnelSupervisor {
             state: "running".into(),
             public_url,
             tunnel_pid: pid,
+            ready: None,
+            ready_detail: None,
         })
     }
 
@@ -890,6 +930,7 @@ impl TunnelSupervisor {
                             public_url,
                             pid,
                             child: None,
+                            metrics_port: None,
                         },
                     );
                 }
@@ -927,6 +968,39 @@ impl TunnelSupervisor {
             && tunnel_use_proxy(&route.profile, route.kind) == tunnel_use_proxy(profile, kind)
     }
 
+    /// 对所有 Cloudflare 会话做一次 `/ready` 探测，写入就绪缓存。
+    ///
+    /// **只读判定，不重启**：cloudflared 自身在按退避重连，
+    /// 边缘不可达时反复杀进程只会在网络恢复瞬间制造重启风暴。
+    /// 返回本次探测到的离线数量，供调用方记日志。
+    pub async fn probe_cloudflare_readiness(&mut self) -> usize {
+        let targets: Vec<((String, TunnelServiceKind), u16)> = self
+            .sessions
+            .iter()
+            .filter_map(|(key, session)| session.metrics_port.map(|port| (key.clone(), port)))
+            .collect();
+
+        let mut offline = 0usize;
+        for (key, port) in targets {
+            // 进程已退就不必探测，交给恢复逻辑处理。
+            if !self.session_is_running(&key) {
+                self.readiness.remove(&key);
+                continue;
+            }
+            let verdict = crate::tunnel::probe_readiness(port).await;
+            if !verdict.is_ready() {
+                offline += 1;
+            }
+            self.readiness.insert(key, verdict);
+        }
+        offline
+    }
+
+    /// 清理已停止会话的就绪缓存，避免残留"在线"结论误导 UI。
+    pub fn forget_readiness(&mut self, key: &(String, TunnelServiceKind)) {
+        self.readiness.remove(key);
+    }
+
     fn session_is_running(&self, key: &(String, TunnelServiceKind)) -> bool {
         if self.frp_routes.contains_key(key) {
             let process_alive = self.frpc.get(&key.0).is_some_and(|process| {
@@ -943,6 +1017,19 @@ impl TunnelSupervisor {
                 .map(|pid| platform().is_process_alive(pid))
                 .unwrap_or(false)
         })
+    }
+}
+
+/// 把就绪结论转成给用户看的原因说明；在线时无话可说。
+fn readiness_detail(readiness: &crate::tunnel::TunnelReadiness) -> Option<String> {
+    match readiness {
+        crate::tunnel::TunnelReadiness::Ready { .. } => None,
+        crate::tunnel::TunnelReadiness::NotReady { detail } => {
+            Some(format!("隧道未建立边缘连接（{detail}）"))
+        }
+        crate::tunnel::TunnelReadiness::Unreachable { detail } => {
+            Some(format!("无法读取隧道状态（{detail}）"))
+        }
     }
 }
 
@@ -1309,6 +1396,7 @@ mod tests {
                 public_url: "https://old.frp.example.com".into(),
                 pid: Some(1),
                 child: None,
+                metrics_port: None,
             },
         );
 

@@ -29,7 +29,10 @@ pub fn supervisor() -> &'static Mutex<TunnelSupervisor> {
     &TUNNEL_SUPERVISOR
 }
 
-/// Start a background loop that restarts stuck FRP clients (process alive, proxy dead).
+/// 后台健康循环：修复卡住的 FRP 客户端，并探测 Cloudflare 隧道就绪。
+///
+/// Cloudflare 侧**只探测、不重启** —— cloudflared 自身在按退避重连，
+/// 边缘不可达时反复杀进程只会在网络恢复瞬间制造重启风暴。
 pub fn ensure_frp_health_loop() {
     if FRP_HEALTH_LOOP_STARTED.swap(true, Ordering::SeqCst) {
         return;
@@ -41,6 +44,13 @@ pub fn ensure_frp_health_loop() {
             let online = frp::probe_host_network_available().await;
             let recovered = update_host_network_state(online);
             let mut guard = supervisor().lock().await;
+            // Cloudflare 隧道：进程活着不代表在线，用 /ready 判；离线只标记不重启。
+            let offline = guard.probe_cloudflare_readiness().await;
+            if offline > 0 {
+                crate::lifecycle::record(&format!(
+                    "cloudflare 隧道有 {offline} 个会话未建立边缘连接（不自动重启，等待其自身重连）"
+                ));
+            }
             if recovered {
                 let _ = guard
                     .restart_frpc_after_network_recovery(&settings)

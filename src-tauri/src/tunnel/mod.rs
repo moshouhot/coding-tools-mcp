@@ -2,6 +2,7 @@ mod access;
 mod cloudflare;
 mod download;
 mod frp;
+mod readiness;
 mod software;
 mod supervisor;
 
@@ -19,6 +20,8 @@ pub use cloudflare::{
 };
 #[allow(unused_imports)]
 pub use frp::{actions_frp_snippet, mcp_frp_snippet};
+#[allow(unused_imports)]
+pub use readiness::{metrics_port_for, parse_ready_response, probe_readiness, TunnelReadiness};
 #[allow(unused_imports)]
 pub use software::{install_software, list_software, uninstall_software, SoftwareStatus};
 #[allow(unused_imports)]

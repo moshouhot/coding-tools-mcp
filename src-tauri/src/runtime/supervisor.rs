@@ -34,6 +34,11 @@ enum RuntimePhase {
     Error,
 }
 
+/// 单次「意图周期」内最多保活尝试次数，防止配置性问题导致无限重试。
+const MAX_KEEPALIVE_ATTEMPTS: u8 = 3;
+/// 两次保活尝试之间的最小间隔，避免重启风暴。
+const KEEPALIVE_COOLDOWN: Duration = Duration::from_secs(60);
+
 struct RuntimeEntry {
     phase: RuntimePhase,
     shutdown: Option<mcp::ShutdownSender>,
@@ -41,6 +46,15 @@ struct RuntimeEntry {
     error_message: Option<String>,
     started_at: Option<std::time::Instant>,
     missing_port_checks: u8,
+    /// 本次启动是否**真的**监听成功过。
+    ///
+    /// 用于区分「启动就失败」（不该自动重启，否则会无限重试）
+    /// 与「曾经正常运行后意外死亡」（可以保活恢复）。
+    had_listening: bool,
+    /// 保活恢复尝试次数，成功监听或用户重新启动时清零。
+    keepalive_attempts: u8,
+    /// 上次保活尝试时间，用于冷却期，避免重启风暴。
+    last_keepalive_at: Option<std::time::Instant>,
 }
 
 #[derive(Default)]
@@ -109,8 +123,50 @@ impl RuntimeSupervisor {
                 error_message: Some(message),
                 started_at: None,
                 missing_port_checks: 0,
+                had_listening: false,
+                keepalive_attempts: 0,
+                last_keepalive_at: None,
             },
         );
+    }
+
+    /// 取出应当尝试保活恢复的服务（MCP / Actions）。
+    ///
+    /// 只挑「曾经真的监听成功、随后进入 Error」的条目：
+    /// - 启动就失败（`had_listening == false`）不重启，避免对配置错误无限重试；
+    /// - 用户显式停止会落到 `Stopped`，因此不会被这里选中；
+    /// - 冷却期内不重复尝试，且有次数上限，避免重启风暴。
+    ///
+    /// 本方法有副作用：选中即计一次尝试并记录时间，保证并发调用不会重复启动同一服务。
+    pub fn take_keepalive_targets(
+        &mut self,
+        profiles: &[WorkspaceProfile],
+        now: std::time::Instant,
+    ) -> Vec<(WorkspaceProfile, ServiceKind)> {
+        let mut targets = Vec::new();
+        for profile in profiles {
+            for kind in [ServiceKind::Mcp, ServiceKind::Actions] {
+                let key = (profile.id.clone(), kind);
+                let Some(entry) = self.entries.get_mut(&key) else {
+                    continue;
+                };
+                if entry.phase != RuntimePhase::Error || !entry.had_listening {
+                    continue;
+                }
+                if entry.keepalive_attempts >= MAX_KEEPALIVE_ATTEMPTS {
+                    continue;
+                }
+                if let Some(last) = entry.last_keepalive_at {
+                    if now.duration_since(last) < KEEPALIVE_COOLDOWN {
+                        continue;
+                    }
+                }
+                entry.keepalive_attempts += 1;
+                entry.last_keepalive_at = Some(now);
+                targets.push((profile.clone(), kind));
+            }
+        }
+        targets
     }
 
     pub fn active_tunnel_service_keys(&self) -> HashSet<(String, TunnelServiceKind)> {
@@ -241,6 +297,9 @@ impl RuntimeSupervisor {
                 error_message: None,
                 started_at: Some(std::time::Instant::now()),
                 missing_port_checks: 0,
+                had_listening: false,
+                keepalive_attempts: 0,
+                last_keepalive_at: None,
             },
         );
 
@@ -377,6 +436,9 @@ impl RuntimeSupervisor {
                         error_message: None,
                         started_at,
                         missing_port_checks: 0,
+                        had_listening: false,
+                        keepalive_attempts: 0,
+                        last_keepalive_at: None,
                     },
                 );
             }
@@ -399,6 +461,9 @@ impl RuntimeSupervisor {
                         error_message: Some(err.to_string()),
                         started_at: None,
                         missing_port_checks: 0,
+                        had_listening: false,
+                        keepalive_attempts: 0,
+                        last_keepalive_at: None,
                     },
                 );
             }
@@ -507,6 +572,9 @@ fn should_mark_runtime_error(entry: &mut RuntimeEntry, listening: bool) -> bool 
     }
     if listening {
         entry.missing_port_checks = 0;
+        // 真的监听成功过：此后若意外死亡才值得保活恢复。
+        entry.had_listening = true;
+        entry.keepalive_attempts = 0;
         return false;
     }
 
@@ -584,7 +652,104 @@ mod tests {
             error_message: None,
             started_at,
             missing_port_checks: 0,
+            had_listening: false,
+            keepalive_attempts: 0,
+            last_keepalive_at: None,
         }
+    }
+
+    #[test]
+    fn keepalive_skips_services_that_never_listened() {
+        // 启动就失败（配置错、端口冲突）不能自动重启，否则会无限重试。
+        let profile = WorkspaceProfile::new("C:/workspace/ka1".into(), Some("ka1".into()));
+        let mut supervisor = RuntimeSupervisor::default();
+        supervisor.entries.insert(
+            (profile.id.clone(), ServiceKind::Mcp),
+            entry(RuntimePhase::Error, None),
+        );
+        let targets = supervisor.take_keepalive_targets(&[profile.clone()], std::time::Instant::now());
+        assert!(targets.is_empty(), "从未监听成功过的服务不应被保活恢复");
+    }
+
+    #[test]
+    fn keepalive_targets_a_service_that_listened_then_died() {
+        // 正常运行后意外死亡：这才是保活的目标。
+        let profile = WorkspaceProfile::new("C:/workspace/ka2".into(), Some("ka2".into()));
+        let mut supervisor = RuntimeSupervisor::default();
+        let mut runtime_entry = entry(RuntimePhase::Error, None);
+        runtime_entry.had_listening = true;
+        supervisor
+            .entries
+            .insert((profile.id.clone(), ServiceKind::Mcp), runtime_entry);
+
+        let now = std::time::Instant::now();
+        let targets = supervisor.take_keepalive_targets(std::slice::from_ref(&profile), now);
+        assert_eq!(targets.len(), 1, "应选中一个待恢复服务");
+        assert_eq!(targets[0].1, ServiceKind::Mcp);
+    }
+
+    #[test]
+    fn keepalive_respects_cooldown_between_attempts() {
+        // 冷却期内不得重复尝试，避免重启风暴。
+        let profile = WorkspaceProfile::new("C:/workspace/ka3".into(), Some("ka3".into()));
+        let mut supervisor = RuntimeSupervisor::default();
+        let mut runtime_entry = entry(RuntimePhase::Error, None);
+        runtime_entry.had_listening = true;
+        supervisor
+            .entries
+            .insert((profile.id.clone(), ServiceKind::Mcp), runtime_entry);
+
+        let now = std::time::Instant::now();
+        assert_eq!(
+            supervisor.take_keepalive_targets(std::slice::from_ref(&profile), now).len(),
+            1
+        );
+        // 同一时刻再取一次：冷却中，应为空。
+        assert!(
+            supervisor
+                .take_keepalive_targets(std::slice::from_ref(&profile), now)
+                .is_empty(),
+            "冷却期内不得再次恢复"
+        );
+    }
+
+    #[test]
+    fn keepalive_stops_after_attempt_cap() {
+        // 达到上限后不再尝试，避免无限重启。
+        let profile = WorkspaceProfile::new("C:/workspace/ka4".into(), Some("ka4".into()));
+        let mut supervisor = RuntimeSupervisor::default();
+        let mut runtime_entry = entry(RuntimePhase::Error, None);
+        runtime_entry.had_listening = true;
+        runtime_entry.keepalive_attempts = MAX_KEEPALIVE_ATTEMPTS;
+        supervisor
+            .entries
+            .insert((profile.id.clone(), ServiceKind::Mcp), runtime_entry);
+
+        assert!(
+            supervisor
+                .take_keepalive_targets(std::slice::from_ref(&profile), std::time::Instant::now())
+                .is_empty(),
+            "达到尝试上限后必须停止恢复"
+        );
+    }
+
+    #[test]
+    fn keepalive_ignores_user_stopped_services() {
+        // 用户显式停止 → Stopped，绝不能被保活复活。
+        let profile = WorkspaceProfile::new("C:/workspace/ka5".into(), Some("ka5".into()));
+        let mut supervisor = RuntimeSupervisor::default();
+        let mut runtime_entry = entry(RuntimePhase::Stopped, None);
+        runtime_entry.had_listening = true;
+        supervisor
+            .entries
+            .insert((profile.id.clone(), ServiceKind::Mcp), runtime_entry);
+
+        assert!(
+            supervisor
+                .take_keepalive_targets(std::slice::from_ref(&profile), std::time::Instant::now())
+                .is_empty(),
+            "用户已停止的服务不得被保活复活"
+        );
     }
 
     #[test]

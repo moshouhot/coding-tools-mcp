@@ -10,6 +10,7 @@ mod data;
 mod error;
 pub mod harness;
 mod health;
+mod lifecycle;
 mod mcp;
 mod platform;
 mod runtime;
@@ -117,6 +118,66 @@ fn acquire_single_instance() -> bool {
     true
 }
 
+/// 服务保活循环。
+///
+/// 只处理 `RuntimePhase::Error` 且 `had_listening == true` 的条目 ——
+/// 即"曾经真的监听成功、随后意外死亡"。启动就失败的配置问题不重试，
+/// 用户显式停止会落到 `Stopped` 也不会被选中。
+/// 恢复带 60s 冷却与最多 3 次上限，避免重启风暴。
+fn spawn_keepalive_loop(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            let state = app.state::<AppState>();
+            let profiles = match state.with_workspaces(|store| Ok(store.list().to_vec())) {
+                Ok(profiles) => profiles,
+                Err(error) => {
+                    lifecycle::record(&format!("保活：读取工作区失败：{error}"));
+                    continue;
+                }
+            };
+            let now = std::time::Instant::now();
+            let targets = match state.with_runtime(|runtime| {
+                Ok(runtime.take_keepalive_targets(&profiles, now))
+            }) {
+                Ok(targets) => targets,
+                Err(error) => {
+                    lifecycle::record(&format!("保活：选取目标失败：{error}"));
+                    continue;
+                }
+            };
+            // 不持锁跨越 await：targets 已是拥有所有权的副本。
+            for (profile, kind) in targets {
+                lifecycle::record(&format!(
+                    "保活：尝试恢复 {kind:?} workspace={}",
+                    profile.id
+                ));
+                match commands::runtime::start_by_kind(&state, &profile.id, kind).await {
+                    Ok(status) => lifecycle::record(&format!(
+                        "保活：恢复结果 {kind:?} state={}",
+                        status.state
+                    )),
+                    Err(error) => {
+                        lifecycle::record(&format!("保活：恢复失败 {kind:?}: {error}"))
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// 记录 panic 到持久化日志。
+///
+/// 注意：这**不是**崩溃转储。原生崩溃（访问违例等）不会走到这里，
+/// 需要 minidump/WER；此处只覆盖 Rust 层可捕获的 panic。
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        lifecycle::record(&format!("应用 panic: {info}"));
+        default_hook(info);
+    }));
+}
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     tray::setup(app)
 }
@@ -129,6 +190,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            install_panic_hook();
+            lifecycle::record(&format!(
+                "应用启动 version={} pid={}",
+                env!("CARGO_PKG_VERSION"),
+                std::process::id()
+            ));
             app.manage(AppState::new().expect("failed to load app state"));
             // Recover FRP clients that stay alive while the public proxy dies
             // (common after install/restart network blips).
@@ -142,6 +209,8 @@ pub fn run() {
             let suppress = tray::SuppressGuard::new();
             // 托盘状态图标：立即采样一次，随后每 5 秒刷新。
             tray::spawn_refresh_loop(app.handle().clone());
+            // 保活：只恢复「曾经真的运行过、随后意外死亡」的服务。
+            spawn_keepalive_loop(app.handle().clone());
             // 由登录自启拉起时：不弹窗口，只驻留托盘，并后台启动绑定工作区的 MCP。
             // 否则（普通启动）：恢复上次实际在运行的 MCP。两条路径互斥。
             if is_autostart {
@@ -241,6 +310,10 @@ pub fn run() {
                 // 补一次快照，消除「刚停止就退出」时轮询 5 秒延迟带来的陈旧值。
                 // 此事件在 cleanup_before_exit 之前触发，监督器状态仍然完整。
                 tray::record_running_now(app_handle);
+                lifecycle::record(&format!(
+                    "应用退出 pid={}（正常退出路径）",
+                    std::process::id()
+                ));
             }
             tauri::RunEvent::WindowEvent { label, event, .. } => {
                 if label != "main" {
