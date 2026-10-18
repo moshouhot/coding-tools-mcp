@@ -8,9 +8,45 @@ use crate::error::{AppError, AppResult};
 /// When true, CloseRequested may destroy the window / exit the process.
 static ALLOW_EXIT: AtomicBool = AtomicBool::new(false);
 
-/// Intercept user close (show confirm / keep running) unless quitting or UI recreate.
-pub fn should_intercept_close() -> bool {
-    !ALLOW_EXIT.load(Ordering::SeqCst) && !crate::commands::ui_memory::should_prevent_exit()
+/// 收到 `CloseRequested` 时该做什么。
+///
+/// 抽成纯函数是为了让「拦截就必须阻止关闭」这条不变量**可测**。
+/// 它被现场 bug 破坏过：旧实现只有隐藏成功才 `prevent_close`，
+/// 失败时放行 → 窗口被销毁 → 进程退出 → 服务全断。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseOutcome {
+    /// 用户已请求退出，或 WebView 正在重建：放行，允许销毁窗口。
+    AllowClose,
+    /// 拦截：**先**阻止关闭，**再**隐藏到托盘。
+    ///
+    /// 两步的先后与配对关系是硬约束，不能拆开判断。
+    PreventCloseThenHide,
+}
+
+impl CloseOutcome {
+    pub fn prevents_close(self) -> bool {
+        matches!(self, CloseOutcome::PreventCloseThenHide)
+    }
+}
+
+/// 纯决策：只取决于「是否已请求退出」与「是否正在重建 UI」。
+///
+/// 注意它**不**接收"托盘是否可用"或"隐藏是否成功"—— 那些都不该影响
+/// 是否阻止关闭。隐藏失败的正确表现是"窗口留在原地"，不是"放行关闭"。
+pub fn close_outcome(allow_exit: bool, ui_recreating: bool) -> CloseOutcome {
+    if allow_exit || ui_recreating {
+        CloseOutcome::AllowClose
+    } else {
+        CloseOutcome::PreventCloseThenHide
+    }
+}
+
+/// 由当前全局标志推导关窗动作。
+pub fn current_close_outcome() -> CloseOutcome {
+    close_outcome(
+        ALLOW_EXIT.load(Ordering::SeqCst),
+        crate::commands::ui_memory::should_prevent_exit(),
+    )
 }
 
 fn main_window(app: &AppHandle) -> AppResult<WebviewWindow> {
@@ -104,19 +140,47 @@ pub fn arm_allow_exit() {
 mod tests {
     use super::*;
 
-    /// 关窗必须被拦截并转成「隐藏到托盘」，除非已明确请求退出。
+    /// 拦截关窗时**必须**阻止关闭。
     ///
-    /// 这条路径现在直接 hide、不再弹确认框；测试锁住「默认拦截」这个前提，
-    /// 避免日后误改成 `return false` 导致点 X 直接杀进程、连带停掉 MCP。
+    /// 回归锁定现场 bug：旧实现只在隐藏成功时 prevent_close，
+    /// 隐藏失败放行 → 窗口销毁 → 最后一个窗口消失 → 进程退出 → 服务全断。
     #[test]
-    fn close_is_intercepted_by_default() {
-        // 注意：本仓库测试并行执行，ALLOW_EXIT 是全局原子量。
-        // 这里只断言默认值（false）语义，不改写它，避免与其它用例互踩。
-        if !ALLOW_EXIT.load(Ordering::SeqCst) {
-            assert!(
-                should_intercept_close(),
-                "默认应拦截关窗（隐藏到托盘），而不是直接退出"
-            );
+    fn interception_always_prevents_close() {
+        let outcome = close_outcome(false, false);
+        assert_eq!(outcome, CloseOutcome::PreventCloseThenHide);
+        assert!(
+            outcome.prevents_close(),
+            "拦截关窗必须阻止关闭，且与隐藏成败无关"
+        );
+    }
+
+    /// 只有「已请求退出」或「正在重建 UI」才允许销毁窗口。
+    #[test]
+    fn only_exit_or_recreate_allows_close() {
+        assert_eq!(close_outcome(true, false), CloseOutcome::AllowClose);
+        assert_eq!(close_outcome(false, true), CloseOutcome::AllowClose);
+        assert!(!CloseOutcome::AllowClose.prevents_close());
+    }
+
+    /// 重建优先于退出标志：既要能销毁窗口，也不会误拦重建。
+    #[test]
+    fn recreate_takes_precedence_and_allows_destroy() {
+        assert_eq!(close_outcome(true, true), CloseOutcome::AllowClose);
+    }
+
+    /// 穷举所有输入组合，确认没有"拦截但放行"的漏洞。
+    #[test]
+    fn no_combination_intercepts_without_preventing_close() {
+        for allow_exit in [false, true] {
+            for recreating in [false, true] {
+                let outcome = close_outcome(allow_exit, recreating);
+                let should_intercept = !(allow_exit || recreating);
+                assert_eq!(
+                    outcome.prevents_close(),
+                    should_intercept,
+                    "allow_exit={allow_exit} recreating={recreating} 行为不一致"
+                );
+            }
         }
     }
 }

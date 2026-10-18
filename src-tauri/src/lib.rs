@@ -323,14 +323,18 @@ pub fn run() {
                 // 直接 hide 而不是 minimize —— Windows 最小化会留下 (-32000,-32000)
                 // 几何哨兵，重建时容易把窗口丢到屏幕外（0.1.32/33 修过的坑）。
                 if let WindowEvent::CloseRequested { api, .. } = event {
-                    if commands::window_chrome::should_intercept_close() {
-                        // 隐藏失败时必须保留窗口：否则「已阻止关闭 + 没藏成功」
-                        // 会让窗口状态与预期不一致，用户还可能以为程序消失了。
-                        match commands::window_chrome::hide_to_tray(app_handle.clone()) {
-                            Ok(()) => api.prevent_close(),
-                            Err(error) => {
-                                eprintln!("[window] 最小化到托盘失败，保留窗口: {error}");
-                            }
+                    // 决策集中在 `window_chrome::close_outcome`（有穷举测试）。
+                    // 关键：它**不**把「托盘能不能用」或「隐藏成不成功」当作
+                    // 是否阻止关闭的条件。隐藏失败的正确表现是窗口留在原地。
+                    if commands::window_chrome::current_close_outcome().prevents_close() {
+                        api.prevent_close();
+                        if let Err(error) =
+                            commands::window_chrome::hide_to_tray(app_handle.clone())
+                        {
+                            eprintln!("[window] 最小化到托盘失败，窗口保持可见: {error}");
+                            crate::lifecycle::record(&format!(
+                                "关窗隐藏到托盘失败（窗口已保留，未退出）: {error}"
+                            ));
                         }
                     }
                 }
