@@ -17,12 +17,9 @@
   import { actionsRuntimeStates, mcpRuntimeStates, workspaces } from "$lib/stores/app";
   import { showToast } from "$lib/stores/toast";
   import { startUiMemoryGuard } from "$lib/ui-memory-guard";
-  import { startCloseGuard } from "$lib/close-guard";
-  import CloseConfirmDialog from "$lib/components/CloseConfirmDialog.svelte";
   import type { RuntimeState } from "$lib/types";
 
   let { children } = $props();
-  let closeConfirmOpen = $state(false);
 
   async function refreshWorkspaces() {
     const items = await listWorkspaces();
@@ -91,9 +88,6 @@
 
   onMount(() => {
     const stopGuard = startUiMemoryGuard();
-    const stopClose = startCloseGuard(() => {
-      closeConfirmOpen = true;
-    });
     void (async () => {
       await refreshWorkspaces();
       const path = $page.url.pathname;
@@ -108,7 +102,6 @@
     })();
     return () => {
       stopGuard();
-      stopClose();
     };
   });
 </script>
@@ -171,9 +164,3 @@
 </AppShell>
 
 <ToastHost />
-<CloseConfirmDialog
-  open={closeConfirmOpen}
-  onCancel={() => {
-    closeConfirmOpen = false;
-  }}
-/>

@@ -99,3 +99,24 @@ pub fn quit_app(app: AppHandle) -> AppResult<()> {
 pub fn arm_allow_exit() {
     ALLOW_EXIT.store(true, Ordering::SeqCst);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 关窗必须被拦截并转成「隐藏到托盘」，除非已明确请求退出。
+    ///
+    /// 这条路径现在直接 hide、不再弹确认框；测试锁住「默认拦截」这个前提，
+    /// 避免日后误改成 `return false` 导致点 X 直接杀进程、连带停掉 MCP。
+    #[test]
+    fn close_is_intercepted_by_default() {
+        // 注意：本仓库测试并行执行，ALLOW_EXIT 是全局原子量。
+        // 这里只断言默认值（false）语义，不改写它，避免与其它用例互踩。
+        if !ALLOW_EXIT.load(Ordering::SeqCst) {
+            assert!(
+                should_intercept_close(),
+                "默认应拦截关窗（隐藏到托盘），而不是直接退出"
+            );
+        }
+    }
+}

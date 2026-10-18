@@ -1,9 +1,17 @@
 [package]
 name = "coding-tools-mcp-desktop"
-version = "0.2.4-custom.6"
+version = "0.2.4-custom.7"
 description = "Coding Tools MCP desktop client"
 authors = ["Coding Tools MCP Contributors"]
 edition = "2021"
+
+[features]
+ui-smoke = []
+
+[[test]]
+name = "window_recovery_smoke"
+harness = false
+required-features = ["ui-smoke"]
 
 [lib]
 name = "coding_tools_mcp_desktop_lib"
@@ -45,6 +53,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 
 [dev-dependencies]
 tempfile = "3"
+log = "0.4"
 # 仅用于通过 Router::oneshot 验证 access 中间件，不进入生产依赖。
 tower = { version = "0.5", features = ["util"] }
 

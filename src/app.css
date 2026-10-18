@@ -795,49 +795,6 @@ button {
   background: rgba(248, 113, 113, 0.1);
 }
 
-/* ─── Close confirm (tray) ─── */
-.tx-close-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 80;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(15, 23, 42, 0.45);
-}
-
-.tx-close-dialog {
-  width: min(420px, 100%);
-  padding: 22px 22px 18px;
-  border-radius: 14px;
-  border: 1px solid var(--border);
-  background: var(--card-bg);
-  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.22);
-}
-
-.tx-close-title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-main);
-}
-
-.tx-close-desc {
-  margin: 10px 0 0;
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--text-muted);
-}
-
-.tx-close-actions {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 20px;
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
