@@ -5,9 +5,9 @@
 
   const sessionPrompt = `请把“一个对话只对应一个项目”作为默认规则。当前对话尚未绑定项目时，如果我的请求明确给出 Workspace 内某个项目、repo、代码库、工程的完整路径，或明显把该目录作为主要开发对象，请先调用 set_active_project 绑定它，再调用 history_session_bootstrap，并把我的首次请求逐字传入 initial_user_input。不要要求目录必须有 .git、package.json、Cargo.toml 等项目标记。若只给项目名没有路径，可调用 discover_projects，只有唯一匹配时才自动绑定。
 一旦本对话已经绑定项目，后续一直保持该项目。即使我提到另一个完整路径，也不要自动切换；只有我明确说“切换当前项目到……”时，才允许调用 set_active_project 并传 allow_rebind=true。Session 没有有效绑定时，不要把 default_cwd 当成当前项目继续工作。
-History 固定使用当前项目的 docs/history-session，不要自定义 history_dir。没有历史记录则创建首个 history-session；已有记录则阅读 bootstrap 返回的有界 state。请保留 bootstrap 返回的 session_key、current_path 和 project_id，并在 checkpoint 时原样传回。
+History 固定使用当前项目的 docs/history-session，不要自定义 history_dir。没有历史记录则创建首个 history-session；已有记录则阅读 bootstrap 返回的有界 state。请保留 bootstrap 返回的 session_key、current_path 和 project_id，并在 checkpoint 时把 current_path 作为 expected_path 传入（checkpoint 的参数名是 expected_path，不是 current_path）。
 需要早期精确细节时，先调用 history_session_search，再用 history_session_read 分页读取相关原始 Markdown，并根据 next_cursor 继续直到完成；不要要求 bootstrap 返回全部历史。
-本会话每轮任务完成后调用 history_session_checkpoint，并原样传入 bootstrap 返回的 session_key 和 current_path，以及我本轮请求的逐字 raw_user_input。
+本会话每轮任务完成后调用 history_session_checkpoint，并传入 bootstrap 返回的 session_key、把 bootstrap 的 current_path 作为 expected_path、以及 project_id，还有我本轮请求的逐字 raw_user_input。
 只有 checkpoint 返回 ok=true 且会话目标一致后才能确认进度已保存；服务端不能自动读取未通过工具参数传入的对话内容。`;
 
   let copying = $state(false);

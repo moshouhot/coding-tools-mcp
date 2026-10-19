@@ -267,6 +267,18 @@ mod tests {
         assert!(component.contains("raw_user_input"));
         assert!(component.contains("history_session_search"));
         assert!(component.contains("history_session_checkpoint"));
+        // 回归锁定：checkpoint 的参数名是 expected_path，而 bootstrap 返回的字段叫
+        // current_path。UI 提示词曾写成"原样传回"，按字面执行会传 current_path，
+        // 被 schema（required: expected_path + additionalProperties:false）拒绝，
+        // 导致进度存不下来 —— 正是本功能要解决的问题本身。
+        assert!(
+            component.contains("作为 expected_path 传入"),
+            "提示词必须说明 current_path 要映射为 expected_path"
+        );
+        assert!(
+            !component.contains("在 checkpoint 时原样传回"),
+            "不得再出现『原样传回』这类会导致字段名错误的表述"
+        );
         let bind_position = component.find("set_active_project").expect("set active project");
         let bootstrap_position = component
             .find("history_session_bootstrap")
